@@ -62,7 +62,7 @@ std::pair<int, float> DNNRecognizer::predict(const cv::Mat &frame)
 {
     cv::Mat embedding = this->_getEmbedding(frame);
     cv::transpose(embedding, embedding);
-    std::pair<int, float> res = std::make_pair(-1, 0);
+    std::pair<int, float> res = std::make_pair(-1, -1);
 
     float dot;
 

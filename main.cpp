@@ -26,16 +26,15 @@ private:
 };
 
 
-
 void drawRectWithLable(cv::Mat& frame, cv::Rect& face, std::string label)
 {
     cv::rectangle(frame, face, {0, 255, 0});
     int baseLine = 0;
     cv::Size labelSize = cv::getTextSize(label, cv::FONT_HERSHEY_SIMPLEX, 1, 1, &baseLine);
     cv::rectangle(frame, cv::Point(face.x, face.y - labelSize.height),
-                    cv::Point(face.x + labelSize.width, face.y + baseLine), cv::Scalar(255, 255, 255), cv::FILLED);
+                   cv::Point(face.x + labelSize.width, face.y + baseLine), cv::Scalar(255, 255, 255), cv::FILLED);
     cv::putText(frame, label, cv::Point(face.x, face.y),
-                cv::FONT_HERSHEY_SIMPLEX, 1, cv::Scalar(0, 0, 0));
+                 cv::FONT_HERSHEY_SIMPLEX, 1, cv::Scalar(0, 0, 0));
 }
 
 
@@ -99,23 +98,23 @@ cv::Mat frontalizeFace2D(const cv::Mat &frame, const std::vector<cv::Point2f> &l
     double dist = sqrt(dx * dx + dy * dy);
     double desiredDist = (1.0 - 2 * desiredLeftEyeX) * desiredFaceWidth;
     double scale = desiredDist / dist;
-    
+
     cv::Mat rotMat = getRotationMatrix2D(eyesCenter, angle, scale);
-    
+
     cv::Point2f desiredEyesCenter(desiredFaceWidth * 0.5f, desiredFaceHeight * desiredLeftEyeY);
-    
+
     rotMat.at<double>(0, 2) += desiredEyesCenter.x - eyesCenter.x;
     rotMat.at<double>(1, 2) += desiredEyesCenter.y - eyesCenter.y;
 
     cv::Mat alignedFace;
-    
-    warpAffine(frame, alignedFace, rotMat, {desiredFaceWidth, desiredFaceHeight});  
 
-    return alignedFace; 
+    warpAffine(frame, alignedFace, rotMat, {desiredFaceWidth, desiredFaceHeight});
+
+    return alignedFace;
 }
 
 
-cv::Mat frontalizeFace3D(const cv::Mat &face, cv::Rect location, const std::vector<cv::Point2f> &landmarks) 
+cv::Mat frontalizeFace3D(const cv::Mat &face, cv::Rect location, const std::vector<cv::Point2f> &landmarks)
 {
     if (landmarks.size() != 68) {
         std::cerr << "Ошибка: ожидается 68 ключевых точек, получено " << landmarks.size() << std::endl;
@@ -202,7 +201,7 @@ void FaceDetectorTest(cv::Ptr<BaseFaceFinder> finder, std::string& path)
         {
             std::string label = cv::format("conf: %.2f", finder->confidences[i]);
             face = getNormalRect(frame, finder->faces[i]);
-            drawRectWithLable(frame, face, label);   
+            drawRectWithLable(frame, face, label);
         }
 
         cv::imshow("FaceDetectorTest", frame);
@@ -236,7 +235,7 @@ void FaceRecognitionTrainTest(cv::Ptr<BaseFaceFinder> finder, cv::Ptr<BaseFaceRe
         for (size_t i = 0; i < finder->faces.size(); ++i)
         {
             std::string label = cv::format("person: %d, counter: %d", index, counter);
-            drawRectWithLable(frame, finder->faces[i], label); 
+            drawRectWithLable(frame, finder->faces[i], label);
         }
 
         cv::imshow("FaceRecognitionsTrainTest", frame);
@@ -246,7 +245,7 @@ void FaceRecognitionTrainTest(cv::Ptr<BaseFaceFinder> finder, cv::Ptr<BaseFaceRe
         {
         case 'q':
             return;
-        
+
         case 'a':
             if(finder->faces.size() != 1){
                 break;
@@ -255,20 +254,49 @@ void FaceRecognitionTrainTest(cv::Ptr<BaseFaceFinder> finder, cv::Ptr<BaseFaceRe
             labels.push_back(index);
             ++counter;
             break;
-        
+
         case 'n':
             ++index;
             counter = 0;
             break;
-        
+
         case 's':
             loop = false;
             break;
-        
+
         default:
             break;
         }
     } while (loop);
+
+    recognizer->train(faces, labels, recognizerPath);
+}
+
+
+void FaceRecognitionTrainOnPhotosTest(cv::Ptr<BaseFaceFinder> finder, cv::Ptr<BaseFaceRecognizer> recognizer, std::string& finderPath, std::string& recognizerPath)
+{
+    finder->read(finderPath);
+
+    cv::Mat frame;
+    int i = 0, index = 0;
+
+    std::vector<int> labels;
+    std::vector<cv::Mat> faces;
+
+    while (true)
+    {
+        frame = cv::imread(cv::format("dataframes/regognition/ideal/img_%d.png", i));
+        if(frame.empty())   break;
+
+        finder->find(frame);
+
+        faces.push_back(frame(finder->faces[0]).clone());
+        labels.push_back(index);
+        if (i % 10 == 9){
+            ++index;
+        }
+        ++i;
+    }
 
     recognizer->train(faces, labels, recognizerPath);
 }
@@ -294,10 +322,10 @@ void FaceRecognitionPredictTest(cv::Ptr<BaseFaceFinder> finder, cv::Ptr<BaseFace
         {
             cv::Mat roi = frame(getNormalRect(frame, finder->faces[i])).clone();
             predictRes = recognizer->predict(roi);
-            label = cv::format("Person %d with %.2f", predictRes.first, predictRes.second);
+            label = cv::format("ID: %d, distance: %.2f", predictRes.first, predictRes.second);
             drawRectWithLable(frame, finder->faces[i], label);
         }
-        
+
         cv::imshow("FaceRecognitionPredictTest", frame);
         if (cv::waitKey(1) == 'q'){
             break;
@@ -327,7 +355,7 @@ void LandmarksTest(cv::Ptr<BaseFaceFinder> finder, cv::Ptr<BaseLandmarksFinder> 
             for (size_t j = 0; j < landmarksFinder->landmarks.size(); ++j){
                 cv::circle(frame, landmarksFinder->landmarks[j], 2, {255, 255, 255}, 2);
             }
-            
+
         }
 
         cv::imshow("LandmarksTest", frame);
@@ -386,7 +414,7 @@ void Allignment3DTest(cv::Ptr<BaseFaceFinder> finder, cv::Ptr<BaseLandmarksFinde
         if(finder->faces.size() == 0)   continue;
 
         landmarksFinder->find(frame, getExtendedRect(frame, finder->faces[0]));
-        
+
         alignedFace = frontalizeFace3D(frame(finder->faces[0]), finder->faces[0], landmarksFinder->landmarks);
 
         finder->find(alignedFace);
@@ -425,7 +453,7 @@ void FaceRecognitionWithAllignment2DTrainTest(cv::Ptr<BaseFaceFinder> finder, cv
         for (size_t i = 0; i < finder->faces.size(); ++i)
         {
             std::string label = cv::format("person: %d, counter: %d", index, counter);
-            drawRectWithLable(frame, finder->faces[i], label); 
+            drawRectWithLable(frame, finder->faces[i], label);
         }
 
         cv::imshow("FaceRecognitionsTrainTest", frame);
@@ -435,7 +463,7 @@ void FaceRecognitionWithAllignment2DTrainTest(cv::Ptr<BaseFaceFinder> finder, cv
         {
         case 'q':
             return;
-        
+
         case 'a':
             if(finder->faces.size() != 1){
                 break;
@@ -447,16 +475,16 @@ void FaceRecognitionWithAllignment2DTrainTest(cv::Ptr<BaseFaceFinder> finder, cv
             labels.push_back(index);
             ++counter;
             break;
-        
+
         case 'n':
             ++index;
             counter = 0;
             break;
-        
+
         case 's':
             loop = false;
             break;
-        
+
         default:
             break;
         }
@@ -477,6 +505,7 @@ void FaceRecognitionWithAllignment2DPredictTest(cv::Ptr<BaseFaceFinder> finder, 
     std::string label;
     std::pair<int, float> predictRes;
 
+
     while (true)
     {
         cap.read(frame);
@@ -492,7 +521,7 @@ void FaceRecognitionWithAllignment2DPredictTest(cv::Ptr<BaseFaceFinder> finder, 
             label = cv::format("Person %d with %.2f", predictRes.first, predictRes.second);
             drawRectWithLable(frame, finder->faces[i], label);
         }
-        
+
         cv::imshow("FaceRecognitionPredictTest", frame);
         if (cv::waitKey(1) == 'q'){
             break;
@@ -527,7 +556,7 @@ void FaceRecognitionWithAllignment3DTrainTest(cv::Ptr<BaseFaceFinder> finder, cv
         for (size_t i = 0; i < finder->faces.size(); ++i)
         {
             std::string label = cv::format("person: %d, counter: %d", index, counter);
-            drawRectWithLable(frame, finder->faces[i], label); 
+            drawRectWithLable(frame, finder->faces[i], label);
         }
 
         cv::imshow("FaceRecognitionsTrainTest", frame);
@@ -537,7 +566,7 @@ void FaceRecognitionWithAllignment3DTrainTest(cv::Ptr<BaseFaceFinder> finder, cv
         {
         case 'q':
             return;
-        
+
         case 'a':
             if(finder->faces.size() != 1){
                 break;
@@ -550,16 +579,16 @@ void FaceRecognitionWithAllignment3DTrainTest(cv::Ptr<BaseFaceFinder> finder, cv
             labels.push_back(index);
             ++counter;
             break;
-        
+
         case 'n':
             ++index;
             counter = 0;
             break;
-        
+
         case 's':
             loop = false;
             break;
-        
+
         default:
             break;
         }
@@ -606,12 +635,82 @@ void FaceRecognitionWithAllignment3DPredictTest(cv::Ptr<BaseFaceFinder> finder, 
             label = cv::format("Person %d with %.2f", predictRes.first, predictRes.second);
             drawRectWithLable(frame, faces[i], label);
         }
-        
+
         cv::imshow("FaceRecognitionPredictTest", frame);
         if (cv::waitKey(1) == 'q'){
             break;
         }
     }
+}
+
+
+void FaceRecognitionWithAllignment3DTrainOnPhotosTest(cv::Ptr<BaseFaceFinder> finder, cv::Ptr<BaseFaceRecognizer> recognizer, cv::Ptr<BaseLandmarksFinder> landmarksFinder, std::string& faceFinderPath, std::string& recognizerPath, std::string& landmarksPath)
+{
+    finder->read(faceFinderPath);
+    landmarksFinder->read(landmarksPath);
+
+    int i = 0, index = 0;
+
+    std::vector<int> labels;
+    std::vector<cv::Mat> faces;
+
+    while (true)
+    {
+        cv::Mat frame = cv::imread(cv::format("dataframes/regognition/ideal/img_%d.png", i));
+        if(frame.empty())   break;
+
+        finder->find(frame);
+
+        cv::Rect extended = getExtendedRect(frame, finder->faces[0]);
+        landmarksFinder->find(frame, extended);
+        cv::Mat allignedFace = frontalizeFace3D(frame(finder->faces[0]), finder->faces[0], landmarksFinder->landmarks);
+        finder->find(allignedFace);
+        faces.push_back(allignedFace(finder->faces[0]).clone());
+        labels.push_back(index);
+
+        if (i % 10 == 9){
+            ++index;
+        }
+        ++i;
+    }
+
+    recognizer->train(faces, labels, recognizerPath);
+}
+
+
+void FaceRecognitionWithAllignment2DTrainOnPhotosTest(cv::Ptr<BaseFaceFinder> finder, cv::Ptr<BaseFaceRecognizer> recognizer, cv::Ptr<BaseLandmarksFinder> landmarksFinder, std::string& faceFinderPath, std::string& recognizerPath, std::string& landmarksPath)
+{
+    finder->read(faceFinderPath);
+    landmarksFinder->read(landmarksPath);
+
+    int i = 0, index = 0;
+
+    std::vector<int> labels;
+    std::vector<cv::Mat> faces;
+
+    while (true)
+    {
+        cv::Mat frame = cv::imread(cv::format("dataframes/regognition/ideal/img_%d.png", i));
+        if(frame.empty())   break;
+
+        finder->find(frame);
+
+        cv::Rect extended = getExtendedRect(frame, finder->faces[0]);
+        landmarksFinder->find(frame, extended);
+        cv::Mat allignedFace = frontalizeFace2D(frame, landmarksFinder->landmarks);
+
+        finder->find(allignedFace);
+
+        faces.push_back(allignedFace(getNormalRect(allignedFace, finder->faces[0])).clone());
+        labels.push_back(index);
+
+        if (i % 10 == 9){
+            ++index;
+        }
+        ++i;
+    }
+
+    recognizer->train(faces, labels, recognizerPath);
 }
 
 
@@ -675,7 +774,7 @@ double FaceDetectorTimeTest(cv::Ptr<BaseFaceFinder> finder, std::string& path)
         {
             std::string label = cv::format("conf: %.2f", finder->confidences[i]);
             face = getNormalRect(frame, finder->faces[i]);
-            drawRectWithLable(frame, face, label);   
+            drawRectWithLable(frame, face, label);
         }
 
         cv::imshow("FaceDetectorTest", frame);
@@ -723,7 +822,7 @@ double FaceRecognitionTimeTest(cv::Ptr<BaseFaceFinder> finder, cv::Ptr<BaseFaceR
             label = cv::format("Person %d with %.2f", predictRes.first, predictRes.second);
             drawRectWithLable(frame, finder->faces[i], label);
         }
-        
+
         cv::imshow("FaceRecognitionPredictTest", frame);
         if (cv::waitKey(1) == 'q'){
             break;
@@ -805,12 +904,12 @@ void addFrames(int nextI)
             loop = false;
             break;
         case 'a':
-            cv::imwrite(cv::format("dataframes/regognition/ideal/img_%d.png", nextI), frame);
+            cv::imwrite(cv::format("dataframes/textData/img_%d.png", nextI), frame);
             ++nextI;
             break;
         }
     }
-} 
+}
 
 
 std::vector<int> FaceDetectorAccuracyTest(cv::Ptr<BaseFaceFinder> finder, std::string& path)
@@ -835,7 +934,7 @@ std::vector<int> FaceDetectorAccuracyTest(cv::Ptr<BaseFaceFinder> finder, std::s
         {
             std::string label = cv::format("conf: %.2f", finder->confidences[k]);
             face = getNormalRect(frame, finder->faces[k]);
-            drawRectWithLable(frame, face, label);   
+            drawRectWithLable(frame, face, label);
         }
 
         cv::imshow("FaceDetectorTest", frame);
@@ -869,8 +968,8 @@ void FaceRecognitionDataCollector(cv::Ptr<BaseFaceFinder> finder, std::string& p
 
     cv::namedWindow("FaceRecognitionDataCollector");
 
-    std::string filename = "dataframes/regognition/recodnitiondata.txt";
-    std::fstream file(filename, std::fstream::in | std::fstream::out | std::fstream::app);
+    //std::string filename = "dataframes/regognition/recodnitiondata.txt";
+    //std::fstream file(filename, std::fstream::in | std::fstream::out | std::fstream::app);
 
     while (true)
     {
@@ -885,14 +984,14 @@ void FaceRecognitionDataCollector(cv::Ptr<BaseFaceFinder> finder, std::string& p
         }
 
         cv::imshow("LandmarksDataCollector", frame);
-        
+
         key = cv::waitKey();
 
         if(key == 'q'){
             break;
         }
-        
-        file << cv::format("%d\n", key - '0');
+
+        //file << cv::format("%d\n", key - '0');
         ++i;
     }
 }
@@ -918,14 +1017,15 @@ std::vector<std::vector<int>> FaceRecognitionAccuracyTest(cv::Ptr<BaseFaceFinder
 
     while (loop)
     {
+        if (i == 250)   break;
         frame = cv::imread(cv::format("dataframes/regognition/data/img_%d.png", i));
         if(frame.empty())   break;
 
         finder->find(frame);
 
-        cv::Mat roi = frame(finder->faces[0]).clone();
+        cv::Mat roi = frame(getNormalRect(frame, finder->faces[0])).clone();
         predictRes = recognizer->predict(roi);
-        (predictRes.second > threshold) ? predictRes.first = 3 : 0;        
+        (predictRes.second > threshold) ? predictRes.first = 3 : 0;
 
         std::getline(file, line);
 
@@ -933,14 +1033,119 @@ std::vector<std::vector<int>> FaceRecognitionAccuracyTest(cv::Ptr<BaseFaceFinder
 
         ++i;
     }
-    
-    // for (size_t j = 0; j < data.size(); ++j)
-    // {
-    //     for (size_t k = 0; k < data[j].size(); ++k){
-    //         std::cout << data[j][k] << '\t';
-    //     }
-    //     std::cout << '\n';
-    // }
+
+    for (size_t j = 0; j < data.size(); ++j)
+    {
+        for (size_t k = 0; k < data[j].size(); ++k){
+            std::cout << data[j][k] << '\t';
+        }
+        std::cout << '\n';
+    }
+
+    return data;
+}
+
+
+std::vector<std::vector<int>> FaceRecognitionAccuracyAlligment3DTest(cv::Ptr<BaseFaceFinder> finder, cv::Ptr<BaseFaceRecognizer> recognizer, cv::Ptr<BaseLandmarksFinder> landmarksFinder, std::string& faceFinderPath, std::string& recognizerPath, std::string& landmarksPath, double threshold)
+{
+    finder->read(faceFinderPath);
+    recognizer->read(recognizerPath);
+    landmarksFinder->read(landmarksPath);
+
+    cv::Mat frame;
+
+    std::string label;
+    std::pair<int, float> predictRes;
+
+    std::string filename = "dataframes/regognition/recodnitiondata.txt";
+    std::ifstream file(filename);
+    std::string line;
+
+    std::vector<std::vector<int>> data(4, std::vector<int>(4, 0));
+    int i = 0;
+    bool loop = true;
+
+    while (loop)
+    {
+        if (i == 333)   break;
+        frame = cv::imread(cv::format("dataframes/regognition/data/img_%d.png", i));
+        if(frame.empty())   break;
+
+        finder->find(frame);
+        cv::Rect roi = finder->faces[0];
+        landmarksFinder->find(frame, getExtendedRect(frame, roi));
+        cv::Mat allidnedFace = frontalizeFace3D(frame(getNormalRect(frame, roi)).clone(), roi, landmarksFinder->landmarks);
+        finder->find(allidnedFace);
+        (finder->faces.size() == 0) ? (roi = cv::Rect(0, 0, allidnedFace.cols, allidnedFace.rows)) : roi = getNormalRect(allidnedFace, finder->faces[0]);
+        predictRes = recognizer->predict(allidnedFace(roi).clone());
+        (predictRes.second < threshold) ? predictRes.first = 3 : 0;
+        std::getline(file, line);
+        data[predictRes.first][std::stoi(line)] += 1;
+
+        ++i;
+    }
+
+    for (size_t j = 0; j < data.size(); ++j)
+    {
+        for (size_t k = 0; k < data[j].size(); ++k){
+            std::cout << data[j][k] << '\t';
+        }
+        std::cout << '\n';
+    }
+
+    return data;
+}
+
+
+std::vector<std::vector<int>> FaceRecognitionAccuracyAlligment2DTest(cv::Ptr<BaseFaceFinder> finder, cv::Ptr<BaseFaceRecognizer> recognizer, cv::Ptr<BaseLandmarksFinder> landmarksFinder, std::string& faceFinderPath, std::string& recognizerPath, std::string& landmarksPath, double threshold)
+{
+    finder->read(faceFinderPath);
+    recognizer->read(recognizerPath);
+    landmarksFinder->read(landmarksPath);
+
+    cv::Mat frame;
+
+    std::string label;
+    std::pair<int, float> predictRes;
+
+    std::string filename = "dataframes/regognition/recodnitiondata.txt";
+    std::ifstream file(filename);
+    std::string line;
+
+    std::vector<std::vector<int>> data(4, std::vector<int>(4, 0));
+    int i = 0;
+    bool loop = true;
+
+    while (loop)
+    {
+        if (i == 250)   break;
+        frame = cv::imread(cv::format("dataframes/regognition/data/img_%d.png", i));
+        if(frame.empty())   break;
+
+        finder->find(frame);
+
+        cv::Rect roi = finder->faces[0];
+        landmarksFinder->find(frame, getExtendedRect(frame, roi));
+        cv::Mat allidnedFace = frontalizeFace2D(frame, landmarksFinder->landmarks);
+        finder->find(allidnedFace);
+        allidnedFace = (finder->faces.empty()) ? allidnedFace : allidnedFace(getNormalRect(allidnedFace, finder->faces[0])).clone();
+        predictRes = recognizer->predict(allidnedFace);
+        (predictRes.second > threshold) ? predictRes.first = 3 : 0;
+
+        std::getline(file, line);
+
+        data[predictRes.first][std::stoi(line)] += 1;
+
+        ++i;
+    }
+
+    for (size_t j = 0; j < data.size(); ++j)
+    {
+        for (size_t k = 0; k < data[j].size(); ++k){
+            std::cout << data[j][k] << '\t';
+        }
+        std::cout << '\n';
+    }
 
     return data;
 }
@@ -974,7 +1179,7 @@ void getDistances(cv::Ptr<BaseFaceFinder> finder, cv::Ptr<BaseFaceRecognizer> re
             res += predictRes.second;
         }
         ++i;
-        
+
         if(i % 10 == 0)
         {
             std::cout << res / 10 << '\n';
@@ -994,18 +1199,9 @@ double getThresholdValue(cv::Ptr<BaseFaceFinder> finder, cv::Ptr<BaseFaceRecogni
     std::string label;
     std::pair<int, float> predictRes;
 
-    double bestnorm = 0;
-    double res;
-    double norm = 0;
-    std::vector<std::vector<int>> data;
-    std::vector<std::vector<int>> real{
-        {63, 0, 0, 0},
-        {0, 55, 0, 0},
-        {0, 0, 48, 0},
-        {0, 0, 0, 42}
-    };
+    int best = 0, temp = 0;
 
-    for (double threshold = 1500; threshold <= 3500; threshold += 100.0)
+    for (double threshold = 700; threshold <= 1500; threshold += 50)
     {
         std::string filename = "dataframes/regognition/recodnitiondata.txt";
         std::ifstream file(filename);
@@ -1017,14 +1213,14 @@ double getThresholdValue(cv::Ptr<BaseFaceFinder> finder, cv::Ptr<BaseFaceRecogni
 
         while (loop)
         {
-            if(i == 208)   break;
+            if (i == 280) break;
             frame = cv::imread(cv::format("dataframes/regognition/data/img_%d.png", i));
 
             finder->find(frame);
 
-            cv::Mat roi = frame(finder->faces[0]).clone();
+            cv::Mat roi = frame(getNormalRect(frame, finder->faces[0])).clone();
             predictRes = recognizer->predict(roi);
-            (predictRes.second > threshold) ? predictRes.first = 3 : 0;        
+            (predictRes.second > static_cast<float>(threshold)) ? predictRes.first = 3 : 0;
 
             std::getline(file, line);
 
@@ -1032,42 +1228,157 @@ double getThresholdValue(cv::Ptr<BaseFaceFinder> finder, cv::Ptr<BaseFaceRecogni
 
             ++i;
         }
-        
-        norm = 0;
 
-        for (size_t j = 0; j < 4; ++j){
-            for (size_t k = 0; k < 4; ++k){
-                norm += pow(real[j][k] - data[j][k], 2);
-            }
-        }
-        
-        norm = sqrt(norm);
+        temp = 0;
 
-        if(norm < bestnorm)
-        {
-            bestnorm = norm;
-            res = threshold;
+        for (int j = 0; j < 3; ++j){
+            temp += data[j][j];
         }
 
-        std::cout << cv::format("tresh: %f\tnorm: %f\n", threshold, norm);
+        if (temp > best){
+            best = temp;
+        }
+
+        std::cout << cv::format("%f\t%d\t%d\n", threshold, temp, data[3][3]);
     }
-    
-    std::cout << "\n\n\n" << res << "\n\n\n";
-    return res;
+
+    std::cout << "\n\n\n" << best << "\n\n\n";
+    return best;
 }
 
 
-struct ClickData 
+double getThresholdValue3DAlligment(cv::Ptr<BaseFaceFinder> finder, cv::Ptr<BaseFaceRecognizer> recognizer, cv::Ptr<BaseLandmarksFinder> landmarksFinder, std::string& faceFinderPath, std::string& recognizerPath, std::string& landmarksPath)
+{
+    finder->read(faceFinderPath);
+    recognizer->read(recognizerPath);
+    landmarksFinder->read(landmarksPath);
+
+    cv::Mat frame;
+
+    std::string label;
+    std::pair<int, float> predictRes;
+
+    int best = 0, temp = 0;
+
+    for (double threshold = 0.1; threshold <= 0.25; threshold += 0.01)
+    {
+        std::string filename = "dataframes/regognition/recodnitiondata.txt";
+        std::ifstream file(filename);
+        std::string line;
+
+        std::vector<std::vector<int>> data(4, std::vector<int>(4, 0));
+        int i = 0;
+        bool loop = true;
+
+        while (loop)
+        {
+            if(i == 333)   break;
+            frame = cv::imread(cv::format("dataframes/regognition/data/img_%d.png", i));
+
+            finder->find(frame);
+            cv::Rect roi = finder->faces[0];
+            landmarksFinder->find(frame, getExtendedRect(frame, roi));
+            cv::Mat allidnedFace = frontalizeFace3D(frame(getNormalRect(frame, roi)).clone(), roi, landmarksFinder->landmarks);
+            finder->find(allidnedFace);
+            (finder->faces.size() == 0) ? (roi = cv::Rect(0, 0, allidnedFace.cols, allidnedFace.rows)) : roi = getNormalRect(allidnedFace, finder->faces[0]);
+            predictRes = recognizer->predict(allidnedFace(roi).clone());
+            (predictRes.second < threshold) ? predictRes.first = 3 : 0;
+            std::getline(file, line);
+            data[predictRes.first][std::stoi(line)] += 1;
+
+            ++i;
+        }
+
+        temp = 0;
+
+        for (int j = 0; j < 3; ++j){
+            temp += data[j][j];
+        }
+
+        if (temp > best){
+            best = temp;
+        }
+
+        std::cout << cv::format("%f\t%d\t%d\n", threshold, temp, data[3][3]);
+    }
+
+    std::cout << "\n\n\n" << best << "\n\n\n";
+    return best;
+}
+
+
+double getThresholdValue2DAlligment(cv::Ptr<BaseFaceFinder> finder, cv::Ptr<BaseFaceRecognizer> recognizer, cv::Ptr<BaseLandmarksFinder> landmarksFinder, std::string& faceFinderPath, std::string& recognizerPath, std::string& landmarksPath)
+{
+    finder->read(faceFinderPath);
+    recognizer->read(recognizerPath);
+    landmarksFinder->read(landmarksPath);
+
+    cv::Mat frame;
+
+    std::string label;
+    std::pair<int, float> predictRes;
+
+    int best = 0, temp = 0;
+
+    for (double threshold = 2000; threshold <= 4000; threshold += 50)
+    {
+        std::string filename = "dataframes/regognition/recodnitiondata.txt";
+        std::ifstream file(filename);
+        std::string line;
+
+        std::vector<std::vector<int>> data(4, std::vector<int>(4, 0));
+        int i = 0;
+        bool loop = true;
+
+        while (loop)
+        {
+            if(i == 250)   break;
+            frame = cv::imread(cv::format("dataframes/regognition/data/img_%d.png", i));
+
+            finder->find(frame);
+            cv::Rect roi = finder->faces[0];
+            landmarksFinder->find(frame, getExtendedRect(frame, roi));
+            cv::Mat allidnedFace = frontalizeFace2D(frame, landmarksFinder->landmarks);
+
+            finder->find(allidnedFace);
+            allidnedFace = (finder->faces.empty()) ? allidnedFace : allidnedFace(getNormalRect(allidnedFace, finder->faces[0])).clone();
+
+            predictRes = recognizer->predict(allidnedFace.clone());
+            (predictRes.second > threshold) ? predictRes.first = 3 : 0;
+            std::getline(file, line);
+            data[predictRes.first][std::stoi(line)] += 1;
+
+            ++i;
+        }
+
+        temp = 0;
+
+        for (int j = 0; j < 3; ++j){
+            temp += data[j][j];
+        }
+
+        if (temp > best){
+            best = temp;
+        }
+
+        std::cout << cv::format("%f\t%d\t%d\n", threshold, temp, data[3][3]);
+    }
+
+    std::cout << "\n\n\n" << best << "\n\n\n";
+    return best;
+}
+
+struct ClickData
 {
     int x = 0;
     int y = 0;
     bool clicked = false;
 };
 
-void onMouse(int event, int x, int y, int /*flags*/, void* userdata) 
+void onMouse(int event, int x, int y, int /*flags*/, void* userdata)
 {
     auto data = reinterpret_cast<ClickData*>(userdata);
-    if (event == cv::EVENT_LBUTTONDOWN) 
+    if (event == cv::EVENT_LBUTTONDOWN)
     {
         data->x = x;
         data->y = y;
@@ -1104,7 +1415,7 @@ void LandmarksDataCollector(cv::Ptr<BaseFaceFinder> finder, std::string& finderP
         }
 
         cv::imshow("LandmarksDataCollector", frame);
-        
+
         int counter = 0;
 
         while (counter < 3)
@@ -1113,7 +1424,7 @@ void LandmarksDataCollector(cv::Ptr<BaseFaceFinder> finder, std::string& finderP
                 break;
             }
             if(!data.clicked) continue;
-            
+
             if(counter == 0)    file << cv::format("img_%d:\n", i);
             file << data.x << '\t' << data.y << '\n';
             data.clicked = false;
@@ -1153,10 +1464,10 @@ double LandmarksAccuracyTest(cv::Ptr<BaseFaceFinder> finder, cv::Ptr<BaseLandmar
             cv::Rect extended = getExtendedRect(frame, finder->faces[i]);
             landmarksFinder->find(frame, extended);
         }
-        
+
         cv::Point2i leftEye = {0, 0}, rightEye = {0, 0}, mounse = {0, 0};
 
-        for(int j = 36; j <= 41; ++j) 
+        for(int j = 36; j <= 41; ++j)
         {
             leftEye.x += landmarksFinder->landmarks[j].x;
             leftEye.y += landmarksFinder->landmarks[j].y;
@@ -1165,8 +1476,8 @@ double LandmarksAccuracyTest(cv::Ptr<BaseFaceFinder> finder, cv::Ptr<BaseLandmar
         leftEye /= 6;
 
         //cv::circle(frame, leftEye, 2, {255, 0, 0});
-        
-        for(int j = 42; j <= 47; ++j) 
+
+        for(int j = 42; j <= 47; ++j)
         {
             rightEye.x += landmarksFinder->landmarks[j].x;
             rightEye.y += landmarksFinder->landmarks[j].y;
@@ -1175,8 +1486,8 @@ double LandmarksAccuracyTest(cv::Ptr<BaseFaceFinder> finder, cv::Ptr<BaseLandmar
         rightEye /= 6;
 
         //cv::circle(frame, rightEye, 2, {0, 255, 0});
-        
-        for(int j = 48; j <= 59; ++j) 
+
+        for(int j = 48; j <= 59; ++j)
         {
             mounse.x += landmarksFinder->landmarks[j].x;
             mounse.y += landmarksFinder->landmarks[j].y;
@@ -1194,7 +1505,7 @@ double LandmarksAccuracyTest(cv::Ptr<BaseFaceFinder> finder, cv::Ptr<BaseLandmar
             std::stringstream stream(line);
             cv::Point2i point;
             stream >> point.x >> point.y;
-                        
+
             switch (j)
             {
             case 1:
@@ -1219,6 +1530,61 @@ double LandmarksAccuracyTest(cv::Ptr<BaseFaceFinder> finder, cv::Ptr<BaseLandmar
 }
 
 
+void joinFrames()
+{
+    cv::Ptr<BaseFaceFinder> finder = cv::makePtr<DNNFaceFinder>();
+    std::string finderPath = "models/faceDetectors/dnn/yolov11n-face.onnx";
+    finder->read(finderPath);
+
+    std::string dnnWeightsPath = "models/recognizers/dnn/arcface.onnx";
+    cv::Ptr<BaseFaceRecognizer> recognizer = cv::makePtr<DNNRecognizer>(dnnWeightsPath);
+    std::string recognizerPath = "models/recognizers/dnn/DNNFaceRecognizer.xml";
+    recognizer->read(recognizerPath);
+
+    cv::Ptr<BaseLandmarksFinder> landmarksFinder = cv::makePtr<DNNLandmarksFinder>();
+    std::string landmarksPath = "models/landmarks/2D/dnn/face_alignment.onnx";
+    landmarksFinder->read(landmarksPath);
+
+    std::vector<cv::Mat> imgs =
+        {
+            cv::imread("dataframes/withfon/img_69.png")
+        };
+
+    for (size_t i = 0; i < imgs.size(); ++i)
+    {
+        finder->find(imgs[i]);
+        for (size_t j = 0; j < finder->faces.size(); ++j)
+        {
+            cv::rectangle(imgs[i], finder->faces[j], cv::Scalar(0, 255, 0), 5);
+        }
+    }
+
+    // finder->find(imgs[0]);
+    //
+    // cv::Mat resultImg = imgs[0].clone();
+    //
+    // finder->find(imgs[0]);
+    // cv::Rect extended = getExtendedRect(imgs[0], finder->faces[0]);
+    // landmarksFinder->find(imgs[0], extended);
+    // cv::Mat allidnedFace = frontalizeFace2D(imgs[0], landmarksFinder->landmarks);
+    //
+    // for (size_t j = 0; j < landmarksFinder->landmarks.size(); ++j){
+    //     cv::circle(imgs[0], landmarksFinder->landmarks[j], 2, {0, 255, 0}, 5);
+    // }
+    //
+    // std::pair<int, float> predictRes = recognizer->predict(allidnedFace);
+    // std::string label = cv::format("ID: %d, distance: %.2f", predictRes.first, predictRes.second);
+    // drawRectWithLable(resultImg, finder->faces[0], label);
+    //
+    // cv::resize(allidnedFace, allidnedFace, cv::Size(allidnedFace.cols * (static_cast<double>(imgs[0].rows) / allidnedFace.rows), imgs[0].rows));
+    // imgs.push_back(allidnedFace);
+    // imgs.push_back(resultImg);
+
+    cv::Mat res;
+    cv::hconcat(imgs, res);
+    cv::imwrite("dataframes/textData/img_1234post.png", res);
+}
+
 
 int main()
 {
@@ -1226,16 +1592,16 @@ int main()
     std::string finderPath = "models/faceDetectors/dnn/yolov11n-face.onnx";
 
     //FaceDetectorTest(finder, finderPath);
-
     //std::cout << '\n' << FaceDetectorTimeTest(finder, finderPath);
 
-
     std::string dnnWeightsPath = "models/recognizers/dnn/arcface.onnx";
-    cv::Ptr<BaseFaceRecognizer> recognizer = cv::makePtr<EigenFaceRecognizer>();
-    std::string recognizerPath = "models/recognizers/classic/EigenFaceRecognizer.xml";
+    cv::Ptr<BaseFaceRecognizer> recognizer = cv::makePtr<DNNRecognizer>(dnnWeightsPath);
+    std::string recognizerPath = "models/recognizers/dnn/DNNFaceRecognizer.xml";
 
     //FaceRecognitionTrainTest(finder, recognizer, finderPath, recognizerPath);
+    //FaceRecognitionTrainOnPhotosTest(finder, recognizer, finderPath, recognizerPath);
     //FaceRecognitionPredictTest(finder, recognizer, finderPath, recognizerPath);
+
 
     //std::cout << '\n' << FaceRecognitionTimeTest(finder, recognizer, finderPath, recognizerPath);
 
@@ -1254,7 +1620,9 @@ int main()
     //FaceRecognitionWithAllignment3DTrainTest(finder, recognizer, landmarksFinder, finderPath, recognizerPath, landmarksPath);
     //FaceRecognitionWithAllignment3DPredictTest(finder, recognizer, landmarksFinder, finderPath, recognizerPath, landmarksPath);
 
-    
+
+    //FaceRecognitionWithAllignment3DTrainOnPhotosTest(finder, recognizer, landmarksFinder, finderPath, recognizerPath, landmarksPath);
+    //FaceRecognitionWithAllignment2DTrainOnPhotosTest(finder, recognizer, landmarksFinder, finderPath, recognizerPath, landmarksPath);
 
     //std::cout << '\n' << LandmarksTimeTest(finder, landmarksFinder, finderPath, landmarksPath);
 
@@ -1266,14 +1634,19 @@ int main()
 
 
 
-    //addFrames(184);
+    //addFrames(6);
     //FaceDetectorAccuracyTest(finder, finderPath);
     //LandmarksDataCollector(finder, finderPath);
     //std::cout << "\n\n" << LandmarksAccuracyTest(finder, landmarksFinder, finderPath, landmarksPath) << "\n\n";
     //getDistances(finder, recognizer, finderPath, recognizerPath);
-    //FaceRecognitionAccuracyTest(finder, recognizer, finderPath, recognizerPath, 2830);
+    //FaceRecognitionAccuracyTest(finder, recognizer, finderPath, recognizerPath, INFINITY);
+    //FaceRecognitionAccuracyAlligment3DTest(finder, recognizer, landmarksFinder, finderPath, recognizerPath, landmarksPath, 0.20675585);
+    //FaceRecognitionAccuracyAlligment2DTest(finder, recognizer, landmarksFinder, finderPath, recognizerPath, landmarksPath, 3290.97);
     //FaceRecognitionDataCollector(finder, finderPath);
-    getThresholdValue(finder, recognizer, finderPath, recognizerPath);
+    //getThresholdValue(finder, recognizer, finderPath, recognizerPath);
+    //getThresholdValue3DAlligment(finder, recognizer, landmarksFinder, finderPath, recognizerPath, landmarksPath);
+    //getThresholdValue2DAlligment(finder, recognizer, landmarksFinder, finderPath, recognizerPath, landmarksPath);
+    joinFrames();
 
     return 0;
 }
