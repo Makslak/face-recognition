@@ -15,15 +15,16 @@ void ClassicFaceFinder::find(const cv::Mat &frame, float confThreshold)
     std::vector<int> rejectLevels;
     std::vector<double> levelWeights;
 
-    double scaleFactor = 1.1;
-    int minNeighbors = 3;
-    cv::Size minSize(30, 30);
-    this->_classifier.detectMultiScale(image, rects, rejectLevels, levelWeights, scaleFactor, minNeighbors, 0, minSize, cv::Size(), true);
+    constexpr double scaleFactor = 1.1;
+    constexpr int minNeighbors = 3;
+    const cv::Size minSize(30, 30);
+    this->_classifier.detectMultiScale(image, rects, rejectLevels, levelWeights, scaleFactor, minNeighbors,
+        /*flags=*/ 0, minSize, /*maxSize=*/ cv::Size(), true);
 
     this->confidences.clear();
 
-    for (size_t i = 0; i < levelWeights.size(); i++) {
-        this->confidences.push_back(levelWeights[i]);
+    for (const double& levelWeight : levelWeights) {
+        this->confidences.push_back(static_cast<float>(levelWeight));
     }
 
     this->faces = rects;

@@ -9,7 +9,7 @@ void BaseClassicLandmarksFinder::find(const cv::Mat &frame, const cv::Rect &face
 {
     this->landmarks.clear();
 
-    std::vector<cv::Rect> faces{this->getExtendedRect(frame, face)};
+    const std::vector<cv::Rect> faces{this->getExtendedRect(frame, face)};
     std::vector<std::vector<cv::Point2f>> landmarks;
     std::vector<cv::Point2f> tempMarks;
 

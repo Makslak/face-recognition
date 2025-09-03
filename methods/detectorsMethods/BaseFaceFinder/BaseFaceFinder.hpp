@@ -2,14 +2,17 @@
 #include <opencv2/opencv.hpp>
 
 
+/**
+ * Base interface for face detectors.
+ */
 class BaseFaceFinder
 {
 public:
 
     virtual void read(const std::string& path) = 0;
-    virtual void find(const cv::Mat& frame, float confThreshold = 0.5f) = 0;
+    virtual void find(const cv::Mat& frame, float confThreshold = 0.5) = 0;
 
-    virtual ~BaseFaceFinder(){};
+    virtual ~BaseFaceFinder() = default;
 
     std::vector<cv::Rect> faces;
     std::vector<float> confidences;

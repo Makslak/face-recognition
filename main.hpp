@@ -27,5 +27,3 @@
 #include "methods/recognizerMethods/EigenFaceRecognizer/EigenFaceRecognizer.hpp"
 #include "methods/recognizerMethods/FisherFaceRecognizer/FisherFaceRecognizer.hpp"
 #include "methods/recognizerMethods/LBPHFaceRecognizer/LBPHFaceRecognizer.hpp"
-
-#include "methods/faceReconstaction/FaceReconstraction.hpp"

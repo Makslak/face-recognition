@@ -6,10 +6,10 @@ void BaseClassicFaceRecognizer::train(const std::vector<cv::Mat> &faces, const s
     std::vector<cv::Mat> images;
     cv::Mat temp;
 
-    for (size_t i = 0; i < faces.size(); ++i)
+    for (const auto& face : faces)
     {
-        cv::cvtColor(faces[i], temp, cv::COLOR_BGR2GRAY);
-        cv::resize(temp, temp, {100, 100});
+        cv::cvtColor(face, temp, cv::COLOR_BGR2GRAY);
+        cv::resize(temp, temp, /*dsize=*/ {100, 100});
         images.push_back(temp.clone());
     }
     

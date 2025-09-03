@@ -1,159 +1,187 @@
 #include "main.hpp"
 
-class Timer 
+enum LandmarksKeypointsID
 {
-public:
-    Timer() : start_time(std::chrono::high_resolution_clock::now()), end_time(std::chrono::high_resolution_clock::now()) {}
+    LeftEyeBegin = 36,
+    LeftEyeEnd = 41,
+    RightEyeBegin = 42,
+    RightEyeEnd = 47,
+    NoseTip = 30,
+    LeftMouth = 48,
+    RightMouth = 54,
 
-    void start() {
-        start_time = std::chrono::high_resolution_clock::now();
-    }
-
-    void stop() {
-        end_time = std::chrono::high_resolution_clock::now();
-    }
-
-    double getElapsedTime() const 
-    {
-        std::chrono::duration<double> elapsed = end_time - start_time;
-        return elapsed.count();
-    }
-
-private:
-
-    std::chrono::high_resolution_clock::time_point start_time;
-    std::chrono::high_resolution_clock::time_point end_time;
+    Size = 68
 };
 
-
-void drawRectWithLable(cv::Mat& frame, cv::Rect& face, std::string label)
+/**
+ * Draws a rectangle over `face` and a white filled label box above it
+ * with black text `label` on that box.
+ * @param frame Image to draw on.
+ * @param face  Rectangle to highlight.
+ * @param label Text to display.
+ */
+void drawRectWithLable(cv::Mat& frame, const cv::Rect& face, const std::string& label)
 {
-    cv::rectangle(frame, face, {0, 255, 0});
+    cv::rectangle(frame, face, /*color=*/ {0, 255, 0});
     int baseLine = 0;
-    cv::Size labelSize = cv::getTextSize(label, cv::FONT_HERSHEY_SIMPLEX, 1, 1, &baseLine);
+    const cv::Size labelSize = cv::getTextSize(label, /*font=*/ cv::FONT_HERSHEY_SIMPLEX, /*fontScale=*/ 1, /*thickness=*/ 1, &baseLine);
     cv::rectangle(frame, cv::Point(face.x, face.y - labelSize.height),
-                   cv::Point(face.x + labelSize.width, face.y + baseLine), cv::Scalar(255, 255, 255), cv::FILLED);
+                   cv::Point(face.x + labelSize.width, face.y + baseLine), /*color=*/ {255, 255, 255}, /*thickness=*/ cv::FILLED);
     cv::putText(frame, label, cv::Point(face.x, face.y),
-                 cv::FONT_HERSHEY_SIMPLEX, 1, cv::Scalar(0, 0, 0));
+                 /*font=*/ cv::FONT_HERSHEY_SIMPLEX, /*fontScale=*/ 1, /*color=*/ {0, 0, 0});
 }
 
 
-cv::Rect getExtendedRect(const cv::Mat& frame, const cv::Rect& face)
+/**
+ * Tries to add ~50 px padding to the left/top and ~100 px to width/height.
+ * If the expansion go outside the image, it clips to `frame` size.
+ * @param frame Source image.
+ * @param face  Original rectangle to expand.
+ * @param xExtension x Extension in pixels.
+ * @param yExtension y Extension in pixels.
+ * @return Expanded rectangle that fits inside the image.
+ */
+cv::Rect getExtendedRect(const cv::Mat& frame, const cv::Rect& face, int xExtension = 50, int yExtension = 50)
 {
     cv::Rect res = face;
 
-    (res.x > 50) ? res.x -= 50 : res.x = 0;
-    (res.y > 50) ? res.y -= 50 : res.y = 0;
-    (res.x + res.width > frame.cols) ? res.width = frame.cols - res.x : res.width += 100;
-    (res.y + res.height > frame.rows) ? res.height = frame.rows - res.y : res.height += 100;
+    (res.x > xExtension) ? res.x -= xExtension : res.x = 0;
+    (res.y > yExtension) ? res.y -= yExtension : res.y = 0;
+    (res.x + res.width > frame.cols) ? res.width = frame.cols - res.x : res.width += (2 * xExtension);
+    (res.y + res.height > frame.rows) ? res.height = frame.rows - res.y : res.height += (2 * yExtension);
 
     // std::cout << frame.size << "\n";
-
     // std::cout << "[" << res.x << "," <<  res.y << "," << res.x + res.width << "," << res.y + res.height << "]" << "\n";
-
     return res;
 }
 
 
-cv::Rect getNormalRect(const cv::Mat& frame, const cv::Rect& face)
+/**
+ * Clamp a rectangle to the image bounds.
+ * @param frame Image used for bounds (not modified).
+ * @param face  Input rectangle (in pixels).
+ * @return Rectangle adjusted to fit inside the image.
+ */
+cv::Rect getClampedRect(const cv::Mat& frame, const cv::Rect& face)
 {
     cv::Rect res = face;
 
-    (res.x < 0) ? res.x = 0 : res.x = res.x;
-    (res.y < 0) ? res.y = 0 : res.y = res.y;
-    (res.x + res.width > frame.cols) ? res.width = frame.cols - res.x : res.width = res.width;
-    (res.y + res.height > frame.rows) ? res.height = frame.rows - res.y : res.height = res.height;
+    if (res.x < 0) { res.x = 0; }
+    if (res.y < 0) { res.y = 0; }
+    if (res.x + res.width > frame.cols) { res.width = frame.cols - res.x; }
+    if (res.y + res.height > frame.rows) { res.height = frame.rows - res.y; }
 
     // std::cout << frame.size << "\n";
-
     // std::cout << "[" << res.x << "," <<  res.y << "," << res.x + res.width << "," << res.y + res.height << "]" << "\n";
-
     return res;
 }
 
 
-cv::Mat frontalizeFace2D(const cv::Mat &frame, const std::vector<cv::Point2f> &landmarks)
+/**
+ * Align a face to a fixed 200×200 crop using eye landmarks.
+ *
+ * @param frame      Input image.
+ * @param landmarks  2D facial landmarks in image coordinates.
+ * @return Aligned face image of size 200×200.
+ */
+cv::Mat alignFace2D(const cv::Mat &frame, const std::vector<cv::Point2f> &landmarks)
 {
+    if (landmarks.size() != LandmarksKeypointsID::Size)
+    {
+        std::cerr << cv::format("expected landmark size: %d. Got: %zu", LandmarksKeypointsID::Size, landmarks.size()) << std::endl;
+        return {};
+    }
+
     cv::Point2f leftEyeCenter(0, 0), rightEyeCenter(0, 0);
-    for (int i = 36; i <= 41; ++i){
+    for (int i = LandmarksKeypointsID::LeftEyeBegin; i <= LandmarksKeypointsID::LeftEyeEnd; ++i){
         leftEyeCenter += landmarks[i];
     }
     leftEyeCenter *= (1.0 / 6.0);
-    for (int i = 42; i <= 47; ++i){
+
+    for (int i = LandmarksKeypointsID::RightEyeBegin; i <= LandmarksKeypointsID::RightEyeEnd; ++i){
         rightEyeCenter += landmarks[i];
     }
     rightEyeCenter *= (1.0 / 6.0);
 
-    double dy = rightEyeCenter.y - leftEyeCenter.y;
-    double dx = rightEyeCenter.x - leftEyeCenter.x;
-    double angle = atan2(dy, dx) * 180.0 / CV_PI;
+    const double dy = rightEyeCenter.y - leftEyeCenter.y;
+    const double dx = rightEyeCenter.x - leftEyeCenter.x;
+    const double angle = atan2(dy, dx) * 180.0 / CV_PI;
 
-    const double desiredLeftEyeX = 0.35;
-    const double desiredLeftEyeY = 0.35;
-    const int desiredFaceWidth = 200;
-    const int desiredFaceHeight = 200;
 
-    cv::Point2f eyesCenter = (leftEyeCenter + rightEyeCenter) * 0.5f;
+    constexpr double requiredLeftEyeX = 0.35;
+    constexpr double requiredLeftEyeY = 0.35;
+    constexpr int requiredFaceWidth = 200;
+    constexpr int requiredFaceHeight = 200;
 
-    double dist = sqrt(dx * dx + dy * dy);
-    double desiredDist = (1.0 - 2 * desiredLeftEyeX) * desiredFaceWidth;
-    double scale = desiredDist / dist;
+    const cv::Point2f eyesCenter = (leftEyeCenter + rightEyeCenter) * 0.5f;
 
-    cv::Mat rotMat = getRotationMatrix2D(eyesCenter, angle, scale);
+    const double dist = sqrt(dx * dx + dy * dy);
+    constexpr double requiredDist = (1.0 - 2 * requiredLeftEyeX) * requiredFaceWidth;
+    const double scale = requiredDist / dist;
 
-    cv::Point2f desiredEyesCenter(desiredFaceWidth * 0.5f, desiredFaceHeight * desiredLeftEyeY);
+    cv::Mat rotMat = cv::getRotationMatrix2D(eyesCenter, angle, scale);
 
-    rotMat.at<double>(0, 2) += desiredEyesCenter.x - eyesCenter.x;
-    rotMat.at<double>(1, 2) += desiredEyesCenter.y - eyesCenter.y;
+    const cv::Point2d requiredEyesCenter(requiredFaceWidth * 0.5, requiredFaceHeight * requiredLeftEyeY);
+
+    rotMat.at<double>(0, 2) += requiredEyesCenter.x - eyesCenter.x;
+    rotMat.at<double>(1, 2) += requiredEyesCenter.y - eyesCenter.y;
 
     cv::Mat alignedFace;
 
-    warpAffine(frame, alignedFace, rotMat, {desiredFaceWidth, desiredFaceHeight});
+    warpAffine(frame, alignedFace, rotMat, {requiredFaceWidth, requiredFaceHeight});
 
     return alignedFace;
 }
 
 
-cv::Mat frontalizeFace3D(const cv::Mat &face, cv::Rect location, const std::vector<cv::Point2f> &landmarks)
+/**
+ * Align a face to a canonical 256×256 view using keypoints.
+ *
+ * @param face      Input face crop.
+ * @param location  Face rectangle in the original image.
+ * @param landmarks Full landmark set.
+ * @return Aligned 256×256 face, or empty Mat if landmark count is invalid.
+ */
+cv::Mat alignFace3D(const cv::Mat &face, const cv::Rect location, const std::vector<cv::Point2f> &landmarks)
 {
-    if (landmarks.size() != 68) {
-        std::cerr << "Ошибка: ожидается 68 ключевых точек, получено " << landmarks.size() << std::endl;
-        return face.clone();
+    if (landmarks.size() != LandmarksKeypointsID::Size)
+    {
+        std::cerr << cv::format("expected landmark size: %d. Got: %zu", LandmarksKeypointsID::Size, landmarks.size()) << std::endl;
+        return {};
     }
 
-    cv::Point2f locationPoint(location.x, location.y);
+    const cv::Point2f locationPoint(static_cast<float>(location.x), static_cast<float>(location.y));
     cv::Point2f leftEye(0, 0);
-    for (int i = 36; i <= 41; ++i) {
+    for (int i = LandmarksKeypointsID::LeftEyeBegin; i <= LandmarksKeypointsID::LeftEyeEnd; ++i) {
         leftEye += landmarks[i];
     }
     leftEye *= (1.0f / 6.0f);
     leftEye -= locationPoint;
 
     cv::Point2f rightEye(0, 0);
-    for (int i = 42; i <= 47; ++i) {
+    for (int i = LandmarksKeypointsID::RightEyeBegin; i <= LandmarksKeypointsID::RightEyeEnd; ++i) {
         rightEye += landmarks[i];
     }
     rightEye *= (1.0f / 6.0f);
     rightEye -= locationPoint;
 
-    cv::Point2f noseTip = landmarks[30] - locationPoint;
+    const cv::Point2f noseTip = landmarks[LandmarksKeypointsID::NoseTip] - locationPoint;
+    const cv::Point2f leftMouth = landmarks[LandmarksKeypointsID::LeftMouth] - locationPoint;
+    const cv::Point2f rightMouth = landmarks[LandmarksKeypointsID::RightMouth] - locationPoint;
 
-    cv::Point2f leftMouth = landmarks[48] - locationPoint;
+    const std::vector<cv::Point2f> srcPoints = { leftEye, rightEye, noseTip, leftMouth, rightMouth };
 
-    cv::Point2f rightMouth = landmarks[54] - locationPoint;
+    constexpr float scale = 256.0 / 112.0;
 
-    std::vector<cv::Point2f> srcPoints = { leftEye, rightEye, noseTip, leftMouth, rightMouth };
-
-    double scale = 256.0 / 112.0;
-    std::vector<cv::Point2f> dstPoints = {
-        cv::Point2f(38.2946f * scale, 51.6963f * scale),
-        cv::Point2f(73.5318f * scale, 51.5014f * scale),
-        cv::Point2f(56.0252f * scale, 71.7366f * scale),
-        cv::Point2f(41.5493f * scale, 92.3655f * scale),
-        cv::Point2f(70.7299f * scale, 92.2041f * scale)
+    const std::vector<cv::Point2f> perfectFace = {
+        /*leftEye=*/    cv::Point2f(38.2946f * scale, 51.6963f * scale),
+        /*rightEye=*/   cv::Point2f(73.5318f * scale, 51.5014f * scale),
+        /*noseTip=*/    cv::Point2f(56.0252f * scale, 71.7366f * scale),
+        /*leftMouth=*/  cv::Point2f(41.5493f * scale, 92.3655f * scale),
+        /*rightMouth=*/ cv::Point2f(70.7299f * scale, 92.2041f * scale)
     };
 
-    cv::Mat H = cv::findHomography(srcPoints, dstPoints);
+    const cv::Mat H = cv::findHomography(srcPoints, perfectFace);
 
     cv::Mat alignedFace;
     cv::warpPerspective(face, alignedFace, H, cv::Size(256, 256));
@@ -162,7 +190,15 @@ cv::Mat frontalizeFace3D(const cv::Mat &face, cv::Rect location, const std::vect
 }
 
 
-void draw3DPoints(cv::Mat& frame, std::vector<cv::Point3f>& points)
+/**
+ * @brief Draw 3D points on an image with depth-coded color.
+ *
+ * @param frame      Image to draw on.
+ * @param points     3D points; x/y are pixel coords, z is used for color.
+ * @param radius     Circle radius in pixels (default: 2).
+ * @param thickness  Circle thickness in pixels (default: cv::FILLED).
+ */
+void draw3DPoints(cv::Mat& frame, const std::vector<cv::Point3f>& points, int radius = 2, int thickness = cv::FILLED)
 {
     double min = points[0].z, max = points[0].z;
     for (size_t i = 1; i < points.size(); ++i)
@@ -171,56 +207,77 @@ void draw3DPoints(cv::Mat& frame, std::vector<cv::Point3f>& points)
         if (points[i].z < min) min = points[i].z;
     }
 
-    double scale = 255.0 / (max - min);
+    const double scale = 255.0 / (max - min);
 
-    for (size_t i = 0; i < points.size(); ++i)
+    for (const auto& point : points)
     {
-        std::cout << (points[i].z + min) * scale << "\n";
-        cv::circle(frame, {static_cast<int>(points[i].x), static_cast<int>(points[i].y)}, 2, {0, 0, (points[i].z - min) * scale}, 2);
+        // std::cout << (points[i].z + min) * scale << "\n";
+        cv::circle(frame, /*center=*/ {static_cast<int>(point.x), static_cast<int>(point.y)}, radius,
+            /*color=*/ {0, 0, (point.z - min) * scale}, thickness);
     }
 }
 
 
 
 
-void FaceDetectorTest(cv::Ptr<BaseFaceFinder> finder, std::string& path)
-{
-    finder->read(path);
 
+/**
+ * Live cam demo for a face finder.
+ * @param finder Face finder instance.
+ */
+void FaceDetectorTest(const std::unique_ptr<BaseFaceFinder>& finder)
+{
     cv::VideoCapture cap(0);
+    if (!cap.isOpened())
+    {
+        std::cerr << "Failed to open camera" << std::endl;
+        return;
+    }
+
+    const std::string windowName = "FaceDetectorTest";
+    cv::namedWindow(windowName, cv::WINDOW_NORMAL);
+
     cv::Mat frame;
 
-    cv::Rect face;
-
-    while (true)
+    while (cv::waitKey(1) != 'q')
     {
         cap.read(frame);
         finder->find(frame);
 
         for (size_t i = 0; i < finder->faces.size(); ++i)
         {
-            std::string label = cv::format("conf: %.2f", finder->confidences[i]);
-            face = getNormalRect(frame, finder->faces[i]);
+            std::string label = cv::format("confidence: %.2f", finder->confidences[i]);
+            const cv::Rect face = getClampedRect(frame, finder->faces[i]);
             drawRectWithLable(frame, face, label);
         }
 
-        cv::imshow("FaceDetectorTest", frame);
-        if(cv::waitKey(1) == 'q'){
-            break;
-        }
+        cv::imshow(windowName, frame);
     }
 }
 
 
-void FaceRecognitionTrainTest(cv::Ptr<BaseFaceFinder> finder, cv::Ptr<BaseFaceRecognizer> recognizer, std::string& finderPath, std::string& recognizerPath)
+/**
+ * Collect face samples and train a recognizer.
+ * @param finder          Face finder instance.
+ * @param recognizer      Face recognizer to be trained on collected samples.
+ * @param recognizerPath  Path where the trained model will be saved.
+ */
+void FaceRecognitionTrainTest(const std::unique_ptr<BaseFaceFinder>& finder,
+    const std::unique_ptr<BaseFaceRecognizer>& recognizer,
+    const std::string& recognizerPath)
 {
-    finder->read(finderPath);
-
     cv::VideoCapture cap(0);
+    if (!cap.isOpened())
+    {
+        std::cerr << "Failed to open camera" << std::endl;
+        return;
+    }
+
+    const std::string windowName = "FaceRecognitionTrainTest";
+    cv::namedWindow(windowName, cv::WINDOW_NORMAL);
+
     cv::Mat frame;
-    int counter = 0, index = 0;
-    std::string label;
-    char key;
+    int faceCounter = 0, faceIndex = 0;
     bool loop = true;
 
     std::vector<int> labels;
@@ -232,16 +289,15 @@ void FaceRecognitionTrainTest(cv::Ptr<BaseFaceFinder> finder, cv::Ptr<BaseFaceRe
 
         finder->find(frame);
 
-        for (size_t i = 0; i < finder->faces.size(); ++i)
+        for (const auto& face : finder->faces)
         {
-            std::string label = cv::format("person: %d, counter: %d", index, counter);
-            drawRectWithLable(frame, finder->faces[i], label);
+            std::string label = cv::format("person: %d, counter: %d", faceIndex, faceCounter);
+            drawRectWithLable(frame, face, label);
         }
 
-        cv::imshow("FaceRecognitionsTrainTest", frame);
-        key = cv::waitKey(1);
+        cv::imshow(windowName, frame);
 
-        switch (key)
+        switch (static_cast<char>(cv::waitKey(/*delay=*/ 1)))
         {
         case 'q':
             return;
@@ -251,13 +307,13 @@ void FaceRecognitionTrainTest(cv::Ptr<BaseFaceFinder> finder, cv::Ptr<BaseFaceRe
                 break;
             }
             faces.push_back(frame(finder->faces[0]).clone());
-            labels.push_back(index);
-            ++counter;
+            labels.push_back(faceIndex);
+            ++faceCounter;
             break;
 
         case 'n':
-            ++index;
-            counter = 0;
+            ++faceIndex;
+            faceCounter = 0;
             break;
 
         case 's':
@@ -273,172 +329,195 @@ void FaceRecognitionTrainTest(cv::Ptr<BaseFaceFinder> finder, cv::Ptr<BaseFaceRe
 }
 
 
-void FaceRecognitionTrainOnPhotosTest(cv::Ptr<BaseFaceFinder> finder, cv::Ptr<BaseFaceRecognizer> recognizer, std::string& finderPath, std::string& recognizerPath)
+/**
+ * Сam demo: detect faces and run recognition, showing ID and confidence.
+ * @param finder      Face finder instance.
+ * @param recognizer  Trained face recognizer used to predict.
+ */
+void FaceRecognitionPredictTest(const std::unique_ptr<BaseFaceFinder>& finder,
+    const std::unique_ptr<BaseFaceRecognizer>& recognizer)
 {
-    finder->read(finderPath);
-
-    cv::Mat frame;
-    int i = 0, index = 0;
-
-    std::vector<int> labels;
-    std::vector<cv::Mat> faces;
-
-    while (true)
+    cv::VideoCapture cap(0);
+    if (!cap.isOpened())
     {
-        frame = cv::imread(cv::format("dataframes/regognition/ideal/img_%d.png", i));
-        if(frame.empty())   break;
-
-        finder->find(frame);
-
-        faces.push_back(frame(finder->faces[0]).clone());
-        labels.push_back(index);
-        if (i % 10 == 9){
-            ++index;
-        }
-        ++i;
+        std::cerr << "Failed to open camera" << std::endl;
+        return;
     }
 
-    recognizer->train(faces, labels, recognizerPath);
-}
-
-
-void FaceRecognitionPredictTest(cv::Ptr<BaseFaceFinder> finder, cv::Ptr<BaseFaceRecognizer> recognizer, std::string& finderPath, std::string& recognizerPath)
-{
-    finder->read(finderPath);
-    recognizer->read(recognizerPath);
+    const std::string windowName = "FaceRecognitionPredictTest";
+    cv::namedWindow(windowName, cv::WINDOW_NORMAL);
     cv::Mat frame;
-    cv::VideoCapture cap(0);
 
-    std::string label;
-    std::pair<int, float> predictRes;
-
-    while (true)
+    while (cv::waitKey(1) != 'q')
     {
         cap.read(frame);
 
         finder->find(frame);
 
-        for (size_t i = 0; i < finder->faces.size(); ++i)
+        for (const auto& face : finder->faces)
         {
-            cv::Mat roi = frame(getNormalRect(frame, finder->faces[i])).clone();
-            predictRes = recognizer->predict(roi);
-            label = cv::format("ID: %d, distance: %.2f", predictRes.first, predictRes.second);
-            drawRectWithLable(frame, finder->faces[i], label);
+            cv::Mat roi = frame(getClampedRect(frame, face)).clone();
+            auto [id, conf] = recognizer->predict(roi);
+            std::string label = cv::format("ID: %d, confidence: %.2f", id, conf);
+            drawRectWithLable(frame, face, label);
         }
 
-        cv::imshow("FaceRecognitionPredictTest", frame);
-        if (cv::waitKey(1) == 'q'){
-            break;
-        }
+        cv::imshow(windowName, frame);
     }
 }
 
 
-void LandmarksTest(cv::Ptr<BaseFaceFinder> finder, cv::Ptr<BaseLandmarksFinder> landmarksFinder, std::string& finderPath, std::string& landmarksPath)
+/**
+ * Cam demo: detect faces, find landmarks, and draw them.
+ * @param finder           Face finder instance.
+ * @param landmarksFinder  Landmark finder instance.
+ * @param radius           Circle radius for landmark points (default: 2).
+ * @param color            Landmark color in BGR (default: {255,255,255}).
+ * @param thickness        Circle thickness (default: cv::FILLED).
+ */
+void LandmarksTest(const std::unique_ptr<BaseFaceFinder>& finder,
+    const std::unique_ptr<BaseLandmarksFinder>& landmarksFinder,
+    int radius = 2,
+    const cv::Scalar& color = {255, 255, 255},
+    int thickness = cv::FILLED)
 {
-    finder->read(finderPath);
-    landmarksFinder->read(landmarksPath);
-
     cv::VideoCapture cap(0);
+    if (!cap.isOpened())
+    {
+        std::cerr << "Failed to open camera" << std::endl;
+        return;
+    }
+
+    const std::string windowName = "LandmarksTest";
+    cv::namedWindow(windowName, cv::WINDOW_NORMAL);
+
     cv::Mat frame;
 
-    while (true)
+    while (cv::waitKey(1) != 'q')
     {
         cap.read(frame);
         finder->find(frame);
 
-        for (size_t i = 0; i < finder->faces.size(); ++i)
+        for (const auto& face : finder->faces)
         {
-            cv::Rect extended = getExtendedRect(frame, finder->faces[i]);
+            cv::Rect extended = getExtendedRect(frame, face);
             drawRectWithLable(frame, extended, "");
             landmarksFinder->find(frame, extended);
-            for (size_t j = 0; j < landmarksFinder->landmarks.size(); ++j){
-                cv::circle(frame, landmarksFinder->landmarks[j], 2, {255, 255, 255}, 2);
+            for (auto point : landmarksFinder->landmarks){
+                cv::circle(frame, point, radius, color, thickness);
             }
 
         }
 
-        cv::imshow("LandmarksTest", frame);
-        if(cv::waitKey(1) == 'q'){
-            break;
-        }
+        cv::imshow(windowName, frame);
     }
 }
 
 
-void Allignment2DTest(cv::Ptr<BaseFaceFinder> finder, cv::Ptr<BaseLandmarksFinder> landmarksFinder, std::string& finderPath, std::string& landmarksPath)
+/**
+ * Cam demo: detect a face, find landmarks and align it (2D).
+ * @param finder          Face detector instance.
+ * @param landmarksFinder Landmark detector instance.
+ */
+void Alignment2DTest(const std::unique_ptr<BaseFaceFinder>& finder,
+    const std::unique_ptr<BaseLandmarksFinder>& landmarksFinder)
 {
-    finder->read(finderPath);
-    landmarksFinder->read(landmarksPath);
-
     cv::VideoCapture cap(0);
+    if (!cap.isOpened())
+    {
+        std::cerr << "Failed to open camera" << std::endl;
+        return;
+    }
+    const std::string windowName = "Alignment2DTest";
+    const std::string faceWindowName = "Face";
+    cv::namedWindow(windowName, cv::WINDOW_NORMAL);
+    cv::namedWindow(faceWindowName, cv::WINDOW_NORMAL);
+
     cv::Mat frame, alignedFace;
 
-    while (true)
+    while (cv::waitKey(1) != 'q')
     {
         cap.read(frame);
         finder->find(frame);
 
-        for (size_t i = 0; i < finder->faces.size(); ++i)
+        for (const auto& face : finder->faces)
         {
-            cv::Rect extended = getExtendedRect(frame, finder->faces[i]);
+            cv::Rect extended = getExtendedRect(frame, face);
             landmarksFinder->find(frame, extended);
 
-            alignedFace = frontalizeFace2D(frame, landmarksFinder->landmarks);
+            alignedFace = alignFace2D(frame, landmarksFinder->landmarks);
         }
 
-        cv::imshow("Allignment2DTest", frame);
+        cv::imshow(windowName, frame);
         if(alignedFace.rows != 0){
-            cv::imshow("Rotated", alignedFace);
-        }
-        if(cv::waitKey(1) == 'q'){
-            break;
+            cv::imshow(faceWindowName, alignedFace);
         }
     }
 }
 
 
-void Allignment3DTest(cv::Ptr<BaseFaceFinder> finder, cv::Ptr<BaseLandmarksFinder> landmarksFinder, std::string& finderPath, std::string& landmarksPath)
+/**
+ * Cam demo: 3D-align the first detected face and show the cropped result.
+ * @param finder          Face detector instance.
+ * @param landmarksFinder Landmark detector instance.
+ *
+ * @note Uses only the first detected face.
+ */
+void Alignment3DTest(const std::unique_ptr<BaseFaceFinder>& finder,
+    const std::unique_ptr<BaseLandmarksFinder>& landmarksFinder)
 {
-    finder->read(finderPath);
-    landmarksFinder->read(landmarksPath);
-
     cv::VideoCapture cap(0);
-    cv::Mat frame, alignedFace, face;
+    if (!cap.isOpened())
+    {
+        std::cerr << "Failed to open camera" << std::endl;
+        return;
+    }
+    const std::string faceWindowName = "Face";
+    cv::namedWindow(faceWindowName, cv::WINDOW_NORMAL);
 
-    while (true)
+    cv::Mat frame, face;
+
+    while (cv::waitKey(1) != 'q')
     {
         cap.read(frame);
         finder->find(frame);
 
-        if(finder->faces.size() == 0)   continue;
+        if(finder->faces.empty())   continue;
 
         landmarksFinder->find(frame, getExtendedRect(frame, finder->faces[0]));
 
-        alignedFace = frontalizeFace3D(frame(finder->faces[0]), finder->faces[0], landmarksFinder->landmarks);
+        cv::Mat alignedFace = alignFace3D(frame(finder->faces[0]), finder->faces[0], landmarksFinder->landmarks);
 
         finder->find(alignedFace);
         alignedFace = alignedFace(finder->faces[0]);
-        cv::imshow("Rotated", alignedFace);
-        if(cv::waitKey(1) == 'q'){
-            break;
-        }
+        cv::imshow(faceWindowName, alignedFace);
     }
 }
 
 
-void FaceRecognitionWithAllignment2DTrainTest(cv::Ptr<BaseFaceFinder> finder, cv::Ptr<BaseFaceRecognizer> recognizer, cv::Ptr<BaseLandmarksFinder> landmarksFinder, std::string& faceFinderPath, std::string& recognizerPath, std::string& landmarksPath)
+/**
+ * Collect aligned (2D) face samples from the cam and train a recognizer.
+ * @param finder          Face detector instance.
+ * @param recognizer      Face recognizer to train on collected aligned crops.
+ * @param landmarksFinder Landmark detector instance.
+ * @param recognizerPath  Path to save the trained model.
+ */
+void FaceRecognitionWithAlignment2DTrainTest(const std::unique_ptr<BaseFaceFinder>& finder,
+    const std::unique_ptr<BaseFaceRecognizer>& recognizer,
+    const std::unique_ptr<BaseLandmarksFinder>& landmarksFinder,
+    const std::string& recognizerPath)
 {
-    finder->read(faceFinderPath);
-    recognizer->read(recognizerPath);
-    landmarksFinder->read(landmarksPath);
-
     cv::VideoCapture cap(0);
-    cv::Mat frame, allignedFace;
-    cv::Rect extended;
-    int counter = 0, index = 0;
-    std::string label;
-    char key;
+    if (!cap.isOpened())
+    {
+        std::cerr << "Failed to open camera" << std::endl;
+        return;
+    }
+    const std::string windowName = "FaceRecognitionWithAlignment2DTrainTest";
+    cv::namedWindow(windowName, cv::WINDOW_NORMAL);
+
+    cv::Mat frame;
+    int faceCounter = 0, faceIndex = 0;
     bool loop = true;
 
     std::vector<int> labels;
@@ -450,35 +529,36 @@ void FaceRecognitionWithAllignment2DTrainTest(cv::Ptr<BaseFaceFinder> finder, cv
 
         finder->find(frame);
 
-        for (size_t i = 0; i < finder->faces.size(); ++i)
+        for (const auto& face : finder->faces)
         {
-            std::string label = cv::format("person: %d, counter: %d", index, counter);
-            drawRectWithLable(frame, finder->faces[i], label);
+            std::string label = cv::format("id: %d, counter: %d", faceIndex, faceCounter);
+            drawRectWithLable(frame, face, label);
         }
 
-        cv::imshow("FaceRecognitionsTrainTest", frame);
-        key = cv::waitKey(1);
+        cv::imshow(windowName, frame);
 
-        switch (key)
+        switch (static_cast<char>(cv::waitKey(1)))
         {
         case 'q':
             return;
 
         case 'a':
+        {
             if(finder->faces.size() != 1){
                 break;
             }
-            extended = getExtendedRect(frame, finder->faces[0]);
+            cv::Rect extended = getExtendedRect(frame, finder->faces[0]);
             landmarksFinder->find(frame, extended);
-            allignedFace = frontalizeFace2D(frame, landmarksFinder->landmarks);
-            faces.push_back(allignedFace.clone());
-            labels.push_back(index);
-            ++counter;
+            cv::Mat alignedFace = alignFace2D(frame, landmarksFinder->landmarks);
+            faces.push_back(alignedFace.clone());
+            labels.push_back(faceIndex);
+            ++faceCounter;
             break;
+        }
 
         case 'n':
-            ++index;
-            counter = 0;
+            ++faceIndex;
+            faceCounter = 0;
             break;
 
         case 's':
@@ -494,54 +574,73 @@ void FaceRecognitionWithAllignment2DTrainTest(cv::Ptr<BaseFaceFinder> finder, cv
 }
 
 
-void FaceRecognitionWithAllignment2DPredictTest(cv::Ptr<BaseFaceFinder> finder, cv::Ptr<BaseFaceRecognizer> recognizer, cv::Ptr<BaseLandmarksFinder> landmarksFinder, std::string& faceFinderPath, std::string& recognizerPath, std::string& landmarksPath)
+/**
+ * Cam demo: detect faces, align (2D) and recognize.
+ * @param finder          Face detector instance.
+ * @param recognizer      Face recognizer instance.
+ * @param landmarksFinder Landmark detector instance.
+ */
+void FaceRecognitionWithAlignment2DPredictTest(const std::unique_ptr<BaseFaceFinder>& finder,
+    const std::unique_ptr<BaseFaceRecognizer>& recognizer,
+    const std::unique_ptr<BaseLandmarksFinder>& landmarksFinder)
 {
-    finder->read(faceFinderPath);
-    recognizer->read(recognizerPath);
-    landmarksFinder->read(landmarksPath);
-    cv::Mat frame, allidnedFace;
     cv::VideoCapture cap(0);
+    if (!cap.isOpened())
+    {
+        std::cerr << "Failed to open camera" << std::endl;
+        return;
+    }
 
-    std::string label;
-    std::pair<int, float> predictRes;
+    const std::string windowName = "FaceRecognitionWithAlignment2DPredictTest";
+    cv::namedWindow(windowName, cv::WINDOW_NORMAL);
+
+    cv::Mat frame;
 
 
-    while (true)
+    while (cv::waitKey(1) != 'q')
     {
         cap.read(frame);
 
         finder->find(frame);
 
-        for (size_t i = 0; i < finder->faces.size(); ++i)
+        for (const auto& face : finder->faces)
         {
-            cv::Rect extended = getExtendedRect(frame, finder->faces[i]);
+            cv::Rect extended = getExtendedRect(frame, face);
             landmarksFinder->find(frame, extended);
-            allidnedFace = frontalizeFace2D(frame, landmarksFinder->landmarks);
-            predictRes = recognizer->predict(allidnedFace);
-            label = cv::format("Person %d with %.2f", predictRes.first, predictRes.second);
-            drawRectWithLable(frame, finder->faces[i], label);
+            cv::Mat alignedFace = alignFace2D(frame, landmarksFinder->landmarks);
+            const auto [id, conf] = recognizer->predict(alignedFace);
+            std::string label = cv::format("Person %d with conf %.2f", id, conf);
+            drawRectWithLable(frame, face, label);
         }
 
-        cv::imshow("FaceRecognitionPredictTest", frame);
-        if (cv::waitKey(1) == 'q'){
-            break;
-        }
+        cv::imshow(windowName, frame);
     }
 }
 
 
-void FaceRecognitionWithAllignment3DTrainTest(cv::Ptr<BaseFaceFinder> finder, cv::Ptr<BaseFaceRecognizer> recognizer, cv::Ptr<BaseLandmarksFinder> landmarksFinder, std::string& faceFinderPath, std::string& recognizerPath, std::string& landmarksPath)
+/**
+ * Collect 3D-aligned face samples from the cam and train a recognizer.
+ * @param finder          Face detector instance.
+ * @param recognizer      Face recognizer instance.
+ * @param landmarksFinder Landmark detector uinstance.
+ * @param recognizerPath  Path to save the trained model.
+ */
+void FaceRecognitionWithAlignment3DTrainTest(const std::unique_ptr<BaseFaceFinder>& finder,
+    const std::unique_ptr<BaseFaceRecognizer>& recognizer,
+    const std::unique_ptr<BaseLandmarksFinder>& landmarksFinder,
+    const std::string& recognizerPath)
 {
-    finder->read(faceFinderPath);
-    recognizer->read(recognizerPath);
-    landmarksFinder->read(landmarksPath);
-
     cv::VideoCapture cap(0);
-    cv::Mat frame, allignedFace;
-    cv::Rect extended;
-    int counter = 0, index = 0;
-    std::string label;
-    char key;
+    if (!cap.isOpened())
+    {
+        std::cerr << "Failed to open camera" << std::endl;
+        return;
+    }
+    const std::string windowName = "FaceRecognitionWithAlignment3DTrainTest";
+    cv::namedWindow(windowName, cv::WINDOW_NORMAL);
+
+    cv::Mat frame;
+    int faceCounter = 0, faceIndex = 0;
     bool loop = true;
 
     std::vector<int> labels;
@@ -553,36 +652,37 @@ void FaceRecognitionWithAllignment3DTrainTest(cv::Ptr<BaseFaceFinder> finder, cv
 
         finder->find(frame);
 
-        for (size_t i = 0; i < finder->faces.size(); ++i)
+        for (const auto& face : finder->faces)
         {
-            std::string label = cv::format("person: %d, counter: %d", index, counter);
-            drawRectWithLable(frame, finder->faces[i], label);
+            std::string label = cv::format("person: %d, counter: %d", faceIndex, faceCounter);
+            drawRectWithLable(frame, face, label);
         }
 
-        cv::imshow("FaceRecognitionsTrainTest", frame);
-        key = cv::waitKey(1);
+        cv::imshow(windowName, frame);
 
-        switch (key)
+        switch (static_cast<char>(cv::waitKey(1)))
         {
         case 'q':
             return;
 
         case 'a':
+        {
             if(finder->faces.size() != 1){
                 break;
             }
-            extended = getExtendedRect(frame, finder->faces[0]);
+            cv::Rect extended = getExtendedRect(frame, finder->faces[0]);
             landmarksFinder->find(frame, extended);
-            allignedFace = frontalizeFace3D(frame(finder->faces[0]), finder->faces[0], landmarksFinder->landmarks);
-            finder->find(allignedFace);
-            faces.push_back(allignedFace(finder->faces[0]).clone());
-            labels.push_back(index);
-            ++counter;
+            cv::Mat alignedFace = alignFace3D(frame(finder->faces[0]), finder->faces[0], landmarksFinder->landmarks);
+            finder->find(alignedFace);
+            faces.push_back(alignedFace(finder->faces[0]).clone());
+            labels.push_back(faceIndex);
+            ++faceCounter;
             break;
+        }
 
         case 'n':
-            ++index;
-            counter = 0;
+            ++faceIndex;
+            faceCounter = 0;
             break;
 
         case 's':
@@ -598,1055 +698,90 @@ void FaceRecognitionWithAllignment3DTrainTest(cv::Ptr<BaseFaceFinder> finder, cv
 }
 
 
-void FaceRecognitionWithAllignment3DPredictTest(cv::Ptr<BaseFaceFinder> finder, cv::Ptr<BaseFaceRecognizer> recognizer, cv::Ptr<BaseLandmarksFinder> landmarksFinder, std::string& faceFinderPath, std::string& recognizerPath, std::string& landmarksPath)
+/**
+ * Cam demo: detect faces, 3D-align each face and recognize.
+ * @param finder          Face detector instance.
+ * @param recognizer      Face recognizer instance.
+ * @param landmarksFinder Landmark detector instance.
+ */
+void FaceRecognitionWithAlignment3DPredictTest(const std::unique_ptr<BaseFaceFinder>& finder,
+    const std::unique_ptr<BaseFaceRecognizer>& recognizer,
+    const std::unique_ptr<BaseLandmarksFinder>& landmarksFinder)
 {
-    finder->read(faceFinderPath);
-    recognizer->read(recognizerPath);
-    landmarksFinder->read(landmarksPath);
-    cv::Mat frame, allidnedFace;
-    cv::Rect extended, roi;
     cv::VideoCapture cap(0);
+    if (!cap.isOpened())
+    {
+        std::cerr << "Failed to open camera" << std::endl;
+        return;
+    }
 
-    std::vector<cv::Rect> faces;
+    const std::string windowName = "FaceRecognitionWithAlignment3DPredictTest";
+    cv::namedWindow(windowName, cv::WINDOW_NORMAL);
 
-    std::string label;
-    std::pair<int, float> predictRes;
+    cv::Mat frame;
 
-    while (true)
+    while (cv::waitKey(1) != 'q')
     {
         cap.read(frame);
 
         finder->find(frame);
-        faces = finder->faces;
+        std::vector<cv::Rect> faces = finder->faces;
 
-        for (size_t i = 0; i < faces.size(); ++i)
+        for (const auto& face : faces)
         {
-            extended = getExtendedRect(frame, faces[i]);
+            cv::Rect extended = getExtendedRect(frame, face);
             landmarksFinder->find(frame, extended);
 
-            roi = faces[i];
+            cv::Rect roi = face;
 
-            allidnedFace = frontalizeFace3D(frame(roi).clone(), faces[i], landmarksFinder->landmarks);
-            finder->find(allidnedFace);
+            cv::Mat alignedFace = alignFace3D(frame(roi).clone(), face, landmarksFinder->landmarks);
+            finder->find(alignedFace);
 
-            (finder->faces.size() == 0) ? (roi = cv::Rect(0, 0, allidnedFace.cols, allidnedFace.rows)) : roi = getNormalRect(allidnedFace, finder->faces[0]);
+            (finder->faces.empty()) ? (roi = cv::Rect(0, 0, alignedFace.cols, alignedFace.rows))
+                                    : roi = getClampedRect(alignedFace, finder->faces[0]);
 
-            predictRes = recognizer->predict(allidnedFace(roi).clone());
-            label = cv::format("Person %d with %.2f", predictRes.first, predictRes.second);
-            drawRectWithLable(frame, faces[i], label);
-        }
-
-        cv::imshow("FaceRecognitionPredictTest", frame);
-        if (cv::waitKey(1) == 'q'){
-            break;
-        }
-    }
-}
-
-
-void FaceRecognitionWithAllignment3DTrainOnPhotosTest(cv::Ptr<BaseFaceFinder> finder, cv::Ptr<BaseFaceRecognizer> recognizer, cv::Ptr<BaseLandmarksFinder> landmarksFinder, std::string& faceFinderPath, std::string& recognizerPath, std::string& landmarksPath)
-{
-    finder->read(faceFinderPath);
-    landmarksFinder->read(landmarksPath);
-
-    int i = 0, index = 0;
-
-    std::vector<int> labels;
-    std::vector<cv::Mat> faces;
-
-    while (true)
-    {
-        cv::Mat frame = cv::imread(cv::format("dataframes/regognition/ideal/img_%d.png", i));
-        if(frame.empty())   break;
-
-        finder->find(frame);
-
-        cv::Rect extended = getExtendedRect(frame, finder->faces[0]);
-        landmarksFinder->find(frame, extended);
-        cv::Mat allignedFace = frontalizeFace3D(frame(finder->faces[0]), finder->faces[0], landmarksFinder->landmarks);
-        finder->find(allignedFace);
-        faces.push_back(allignedFace(finder->faces[0]).clone());
-        labels.push_back(index);
-
-        if (i % 10 == 9){
-            ++index;
-        }
-        ++i;
-    }
-
-    recognizer->train(faces, labels, recognizerPath);
-}
-
-
-void FaceRecognitionWithAllignment2DTrainOnPhotosTest(cv::Ptr<BaseFaceFinder> finder, cv::Ptr<BaseFaceRecognizer> recognizer, cv::Ptr<BaseLandmarksFinder> landmarksFinder, std::string& faceFinderPath, std::string& recognizerPath, std::string& landmarksPath)
-{
-    finder->read(faceFinderPath);
-    landmarksFinder->read(landmarksPath);
-
-    int i = 0, index = 0;
-
-    std::vector<int> labels;
-    std::vector<cv::Mat> faces;
-
-    while (true)
-    {
-        cv::Mat frame = cv::imread(cv::format("dataframes/regognition/ideal/img_%d.png", i));
-        if(frame.empty())   break;
-
-        finder->find(frame);
-
-        cv::Rect extended = getExtendedRect(frame, finder->faces[0]);
-        landmarksFinder->find(frame, extended);
-        cv::Mat allignedFace = frontalizeFace2D(frame, landmarksFinder->landmarks);
-
-        finder->find(allignedFace);
-
-        faces.push_back(allignedFace(getNormalRect(allignedFace, finder->faces[0])).clone());
-        labels.push_back(index);
-
-        if (i % 10 == 9){
-            ++index;
-        }
-        ++i;
-    }
-
-    recognizer->train(faces, labels, recognizerPath);
-}
-
-
-void FaceReconstractionTest(cv::Ptr<BaseFaceFinder> finder, FaceReconstraction reconstraction, std::string& finderPath, std::string& landmarks3DPath, std::string& depthPath)
-{
-    finder->read(finderPath);
-    reconstraction.read(landmarks3DPath, depthPath);
-
-    cv::VideoCapture cap(0);
-    cv::Mat frame;
-
-    while (true)
-    {
-        cap.read(frame);
-        finder->find(frame);
-
-        for (size_t i = 0; i < finder->faces.size(); ++i)
-        {
-            reconstraction.getPoints(frame, finder->faces[i]);
-            draw3DPoints(frame, reconstraction.points);
-        }
-
-        cv::imshow("FaceReconstractionTest", frame);
-        if(cv::waitKey(1) == 'q'){
-            break;
-        }
-    }
-}
-
-
-
-
-
-double FaceDetectorTimeTest(cv::Ptr<BaseFaceFinder> finder, std::string& path)
-{
-    finder->read(path);
-
-    cv::VideoCapture cap(0);
-    cv::Mat frame;
-
-    cv::Rect face;
-
-    Timer timer;
-    double res;
-    std::vector<double> times;
-
-    while (true)
-    {
-        cap.read(frame);
-
-
-        timer.start();
-        finder->find(frame);
-        timer.stop();
-
-        if(finder->faces.size() != 0){
-            times.push_back(timer.getElapsedTime());
-        }
-
-        for (size_t i = 0; i < finder->faces.size(); ++i)
-        {
-            std::string label = cv::format("conf: %.2f", finder->confidences[i]);
-            face = getNormalRect(frame, finder->faces[i]);
+            const auto [id, conf] = recognizer->predict(alignedFace(roi).clone());
+            std::string label = cv::format("Person %d with conf %.2f", id, conf);
             drawRectWithLable(frame, face, label);
         }
 
-        cv::imshow("FaceDetectorTest", frame);
-        if(cv::waitKey(1) == 'q'){
-            break;
-        }
-    }
-
-    res = std::accumulate(times.begin(), times.end(), 0.0);
-    res /= times.size();
-    return res;
-}
-
-
-double FaceRecognitionTimeTest(cv::Ptr<BaseFaceFinder> finder, cv::Ptr<BaseFaceRecognizer> recognizer, std::string& finderPath, std::string& recognizerPath)
-{
-    finder->read(finderPath);
-    recognizer->read(recognizerPath);
-    cv::Mat frame;
-    cv::VideoCapture cap(0);
-
-    std::string label;
-    std::pair<int, float> predictRes;
-
-    Timer timer;
-    double res;
-    std::vector<double> times;
-
-    while (true)
-    {
-        cap.read(frame);
-
-        finder->find(frame);
-
-        for (size_t i = 0; i < finder->faces.size(); ++i)
-        {
-            cv::Mat roi = frame(finder->faces[i]).clone();
-
-            timer.start();
-            predictRes = recognizer->predict(roi);
-            timer.stop();
-
-            times.push_back(timer.getElapsedTime());
-
-            label = cv::format("Person %d with %.2f", predictRes.first, predictRes.second);
-            drawRectWithLable(frame, finder->faces[i], label);
-        }
-
-        cv::imshow("FaceRecognitionPredictTest", frame);
-        if (cv::waitKey(1) == 'q'){
-            break;
-        }
-    }
-
-    res = std::accumulate(times.begin(), times.end(), 0.0);
-    res /= times.size();
-    return res;
-}
-
-
-double LandmarksTimeTest(cv::Ptr<BaseFaceFinder> finder, cv::Ptr<BaseLandmarksFinder> landmarksFinder, std::string& finderPath, std::string& landmarksPath)
-{
-    finder->read(finderPath);
-    landmarksFinder->read(landmarksPath);
-
-    cv::VideoCapture cap(0);
-    cv::Mat frame;
-
-    Timer timer;
-    double res;
-    std::vector<double> times;
-
-    while (true)
-    {
-        cap.read(frame);
-        finder->find(frame);
-
-        for (size_t i = 0; i < finder->faces.size(); ++i)
-        {
-            cv::Rect extended = getExtendedRect(frame, finder->faces[i]);
-            drawRectWithLable(frame, extended, "");
-
-            timer.start();
-            landmarksFinder->find(frame, extended);
-            timer.stop();
-
-            times.push_back(timer.getElapsedTime());
-
-            for (size_t j = 0; j < landmarksFinder->landmarks.size(); ++j){
-                cv::circle(frame, landmarksFinder->landmarks[j], 2, {255, 255, 255}, 2);
-            }
-        }
-
-        cv::imshow("LandmarksTest", frame);
-        if(cv::waitKey(1) == 'q'){
-            break;
-        }
-    }
-
-    res = std::accumulate(times.begin(), times.end(), 0.0);
-    res /= times.size();
-    return res;
-}
-
-
-
-
-void addFrames(int nextI)
-{
-    cv::VideoCapture cap(0);
-    cv::Mat frame;
-
-    char key;
-    bool loop = true;
-
-    while (loop)
-    {
-        cap.read(frame);
-
-
-        cv::imshow("FaceDetectorTest", frame);
-        key = cv::waitKey(1);
-
-        switch (key)
-        {
-        case 'q':
-            loop = false;
-            break;
-        case 'a':
-            cv::imwrite(cv::format("dataframes/textData/img_%d.png", nextI), frame);
-            ++nextI;
-            break;
-        }
+        cv::imshow(windowName, frame);
     }
 }
 
-
-std::vector<int> FaceDetectorAccuracyTest(cv::Ptr<BaseFaceFinder> finder, std::string& path)
-{
-    finder->read(path);
-
-    cv::Mat frame;
-
-    cv::Rect face;
-    std::vector<int> data(3, 0);
-    int i = 0;
-    char key;
-
-    while (true)
-    {
-        frame = cv::imread(cv::format("dataframes/dark/img_%d.png", i));
-        if(frame.empty())   break;
-
-        finder->find(frame);
-
-        for (size_t k = 0; k < finder->faces.size(); ++k)
-        {
-            std::string label = cv::format("conf: %.2f", finder->confidences[k]);
-            face = getNormalRect(frame, finder->faces[k]);
-            drawRectWithLable(frame, face, label);
-        }
-
-        cv::imshow("FaceDetectorTest", frame);
-
-        for (size_t j = 0; j < data.size(); ++j)
-        {
-            key = cv::waitKey();
-            data[j] += (key - '0');
-        }
-
-        ++i;
-
-        if(key == 'q'){
-            break;
-        }
-    }
-
-    std::cout << cv::format("cor: %d\nlos: %d\ninc: %d", data[0], data[1], data[2]);
-    return data;
-}
-
-
-void FaceRecognitionDataCollector(cv::Ptr<BaseFaceFinder> finder, std::string& path)
-{
-    finder->read(path);
-
-    cv::Mat frame;
-    int i = 0;
-
-    char key;
-
-    cv::namedWindow("FaceRecognitionDataCollector");
-
-    //std::string filename = "dataframes/regognition/recodnitiondata.txt";
-    //std::fstream file(filename, std::fstream::in | std::fstream::out | std::fstream::app);
-
-    while (true)
-    {
-        frame = cv::imread(cv::format("dataframes/regognition/data/img_%d.png", i));
-        if(frame.empty())   break;
-        finder->find(frame);
-
-        for (size_t i = 0; i < finder->faces.size(); ++i)
-        {
-            cv::Rect extended = getExtendedRect(frame, finder->faces[i]);
-            drawRectWithLable(frame, extended, "");
-        }
-
-        cv::imshow("LandmarksDataCollector", frame);
-
-        key = cv::waitKey();
-
-        if(key == 'q'){
-            break;
-        }
-
-        //file << cv::format("%d\n", key - '0');
-        ++i;
-    }
-}
-
-
-std::vector<std::vector<int>> FaceRecognitionAccuracyTest(cv::Ptr<BaseFaceFinder> finder, cv::Ptr<BaseFaceRecognizer> recognizer, std::string& finderPath, std::string& recognizerPath, double threshold)
-{
-    finder->read(finderPath);
-    recognizer->read(recognizerPath);
-
-    cv::Mat frame;
-
-    std::string label;
-    std::pair<int, float> predictRes;
-
-    std::string filename = "dataframes/regognition/recodnitiondata.txt";
-    std::ifstream file(filename);
-    std::string line;
-
-    std::vector<std::vector<int>> data(4, std::vector<int>(4, 0));
-    int i = 0;
-    bool loop = true;
-
-    while (loop)
-    {
-        if (i == 250)   break;
-        frame = cv::imread(cv::format("dataframes/regognition/data/img_%d.png", i));
-        if(frame.empty())   break;
-
-        finder->find(frame);
-
-        cv::Mat roi = frame(getNormalRect(frame, finder->faces[0])).clone();
-        predictRes = recognizer->predict(roi);
-        (predictRes.second > threshold) ? predictRes.first = 3 : 0;
-
-        std::getline(file, line);
-
-        data[predictRes.first][std::stoi(line)] += 1;
-
-        ++i;
-    }
-
-    for (size_t j = 0; j < data.size(); ++j)
-    {
-        for (size_t k = 0; k < data[j].size(); ++k){
-            std::cout << data[j][k] << '\t';
-        }
-        std::cout << '\n';
-    }
-
-    return data;
-}
-
-
-std::vector<std::vector<int>> FaceRecognitionAccuracyAlligment3DTest(cv::Ptr<BaseFaceFinder> finder, cv::Ptr<BaseFaceRecognizer> recognizer, cv::Ptr<BaseLandmarksFinder> landmarksFinder, std::string& faceFinderPath, std::string& recognizerPath, std::string& landmarksPath, double threshold)
-{
-    finder->read(faceFinderPath);
-    recognizer->read(recognizerPath);
-    landmarksFinder->read(landmarksPath);
-
-    cv::Mat frame;
-
-    std::string label;
-    std::pair<int, float> predictRes;
-
-    std::string filename = "dataframes/regognition/recodnitiondata.txt";
-    std::ifstream file(filename);
-    std::string line;
-
-    std::vector<std::vector<int>> data(4, std::vector<int>(4, 0));
-    int i = 0;
-    bool loop = true;
-
-    while (loop)
-    {
-        if (i == 333)   break;
-        frame = cv::imread(cv::format("dataframes/regognition/data/img_%d.png", i));
-        if(frame.empty())   break;
-
-        finder->find(frame);
-        cv::Rect roi = finder->faces[0];
-        landmarksFinder->find(frame, getExtendedRect(frame, roi));
-        cv::Mat allidnedFace = frontalizeFace3D(frame(getNormalRect(frame, roi)).clone(), roi, landmarksFinder->landmarks);
-        finder->find(allidnedFace);
-        (finder->faces.size() == 0) ? (roi = cv::Rect(0, 0, allidnedFace.cols, allidnedFace.rows)) : roi = getNormalRect(allidnedFace, finder->faces[0]);
-        predictRes = recognizer->predict(allidnedFace(roi).clone());
-        (predictRes.second < threshold) ? predictRes.first = 3 : 0;
-        std::getline(file, line);
-        data[predictRes.first][std::stoi(line)] += 1;
-
-        ++i;
-    }
-
-    for (size_t j = 0; j < data.size(); ++j)
-    {
-        for (size_t k = 0; k < data[j].size(); ++k){
-            std::cout << data[j][k] << '\t';
-        }
-        std::cout << '\n';
-    }
-
-    return data;
-}
-
-
-std::vector<std::vector<int>> FaceRecognitionAccuracyAlligment2DTest(cv::Ptr<BaseFaceFinder> finder, cv::Ptr<BaseFaceRecognizer> recognizer, cv::Ptr<BaseLandmarksFinder> landmarksFinder, std::string& faceFinderPath, std::string& recognizerPath, std::string& landmarksPath, double threshold)
-{
-    finder->read(faceFinderPath);
-    recognizer->read(recognizerPath);
-    landmarksFinder->read(landmarksPath);
-
-    cv::Mat frame;
-
-    std::string label;
-    std::pair<int, float> predictRes;
-
-    std::string filename = "dataframes/regognition/recodnitiondata.txt";
-    std::ifstream file(filename);
-    std::string line;
-
-    std::vector<std::vector<int>> data(4, std::vector<int>(4, 0));
-    int i = 0;
-    bool loop = true;
-
-    while (loop)
-    {
-        if (i == 250)   break;
-        frame = cv::imread(cv::format("dataframes/regognition/data/img_%d.png", i));
-        if(frame.empty())   break;
-
-        finder->find(frame);
-
-        cv::Rect roi = finder->faces[0];
-        landmarksFinder->find(frame, getExtendedRect(frame, roi));
-        cv::Mat allidnedFace = frontalizeFace2D(frame, landmarksFinder->landmarks);
-        finder->find(allidnedFace);
-        allidnedFace = (finder->faces.empty()) ? allidnedFace : allidnedFace(getNormalRect(allidnedFace, finder->faces[0])).clone();
-        predictRes = recognizer->predict(allidnedFace);
-        (predictRes.second > threshold) ? predictRes.first = 3 : 0;
-
-        std::getline(file, line);
-
-        data[predictRes.first][std::stoi(line)] += 1;
-
-        ++i;
-    }
-
-    for (size_t j = 0; j < data.size(); ++j)
-    {
-        for (size_t k = 0; k < data[j].size(); ++k){
-            std::cout << data[j][k] << '\t';
-        }
-        std::cout << '\n';
-    }
-
-    return data;
-}
-
-
-void getDistances(cv::Ptr<BaseFaceFinder> finder, cv::Ptr<BaseFaceRecognizer> recognizer, std::string& finderPath, std::string& recognizerPath)
-{
-    finder->read(finderPath);
-    recognizer->read(recognizerPath);
-
-    cv::Mat frame;
-
-    std::pair<int, float> predictRes;
-
-    int i = 0;
-    bool loop = true;
-
-    double res = 0;
-
-    while (loop)
-    {
-        frame = cv::imread(cv::format("dataframes/regognition/ideal/img_%d.png", i));
-        if(frame.empty())   break;
-
-        finder->find(frame);
-
-        for (size_t j = 0; j < finder->faces.size(); ++j)
-        {
-            cv::Mat roi = frame(finder->faces[j]).clone();
-            predictRes = recognizer->predict(roi);
-            res += predictRes.second;
-        }
-        ++i;
-
-        if(i % 10 == 0)
-        {
-            std::cout << res / 10 << '\n';
-            res = 0;
-        }
-    }
-}
-
-
-double getThresholdValue(cv::Ptr<BaseFaceFinder> finder, cv::Ptr<BaseFaceRecognizer> recognizer, std::string& finderPath, std::string& recognizerPath)
-{
-    finder->read(finderPath);
-    recognizer->read(recognizerPath);
-
-    cv::Mat frame;
-
-    std::string label;
-    std::pair<int, float> predictRes;
-
-    int best = 0, temp = 0;
-
-    for (double threshold = 700; threshold <= 1500; threshold += 50)
-    {
-        std::string filename = "dataframes/regognition/recodnitiondata.txt";
-        std::ifstream file(filename);
-        std::string line;
-
-        std::vector<std::vector<int>> data(4, std::vector<int>(4, 0));
-        int i = 0;
-        bool loop = true;
-
-        while (loop)
-        {
-            if (i == 280) break;
-            frame = cv::imread(cv::format("dataframes/regognition/data/img_%d.png", i));
-
-            finder->find(frame);
-
-            cv::Mat roi = frame(getNormalRect(frame, finder->faces[0])).clone();
-            predictRes = recognizer->predict(roi);
-            (predictRes.second > static_cast<float>(threshold)) ? predictRes.first = 3 : 0;
-
-            std::getline(file, line);
-
-            data[predictRes.first][std::stoi(line)] += 1;
-
-            ++i;
-        }
-
-        temp = 0;
-
-        for (int j = 0; j < 3; ++j){
-            temp += data[j][j];
-        }
-
-        if (temp > best){
-            best = temp;
-        }
-
-        std::cout << cv::format("%f\t%d\t%d\n", threshold, temp, data[3][3]);
-    }
-
-    std::cout << "\n\n\n" << best << "\n\n\n";
-    return best;
-}
-
-
-double getThresholdValue3DAlligment(cv::Ptr<BaseFaceFinder> finder, cv::Ptr<BaseFaceRecognizer> recognizer, cv::Ptr<BaseLandmarksFinder> landmarksFinder, std::string& faceFinderPath, std::string& recognizerPath, std::string& landmarksPath)
-{
-    finder->read(faceFinderPath);
-    recognizer->read(recognizerPath);
-    landmarksFinder->read(landmarksPath);
-
-    cv::Mat frame;
-
-    std::string label;
-    std::pair<int, float> predictRes;
-
-    int best = 0, temp = 0;
-
-    for (double threshold = 0.1; threshold <= 0.25; threshold += 0.01)
-    {
-        std::string filename = "dataframes/regognition/recodnitiondata.txt";
-        std::ifstream file(filename);
-        std::string line;
-
-        std::vector<std::vector<int>> data(4, std::vector<int>(4, 0));
-        int i = 0;
-        bool loop = true;
-
-        while (loop)
-        {
-            if(i == 333)   break;
-            frame = cv::imread(cv::format("dataframes/regognition/data/img_%d.png", i));
-
-            finder->find(frame);
-            cv::Rect roi = finder->faces[0];
-            landmarksFinder->find(frame, getExtendedRect(frame, roi));
-            cv::Mat allidnedFace = frontalizeFace3D(frame(getNormalRect(frame, roi)).clone(), roi, landmarksFinder->landmarks);
-            finder->find(allidnedFace);
-            (finder->faces.size() == 0) ? (roi = cv::Rect(0, 0, allidnedFace.cols, allidnedFace.rows)) : roi = getNormalRect(allidnedFace, finder->faces[0]);
-            predictRes = recognizer->predict(allidnedFace(roi).clone());
-            (predictRes.second < threshold) ? predictRes.first = 3 : 0;
-            std::getline(file, line);
-            data[predictRes.first][std::stoi(line)] += 1;
-
-            ++i;
-        }
-
-        temp = 0;
-
-        for (int j = 0; j < 3; ++j){
-            temp += data[j][j];
-        }
-
-        if (temp > best){
-            best = temp;
-        }
-
-        std::cout << cv::format("%f\t%d\t%d\n", threshold, temp, data[3][3]);
-    }
-
-    std::cout << "\n\n\n" << best << "\n\n\n";
-    return best;
-}
-
-
-double getThresholdValue2DAlligment(cv::Ptr<BaseFaceFinder> finder, cv::Ptr<BaseFaceRecognizer> recognizer, cv::Ptr<BaseLandmarksFinder> landmarksFinder, std::string& faceFinderPath, std::string& recognizerPath, std::string& landmarksPath)
-{
-    finder->read(faceFinderPath);
-    recognizer->read(recognizerPath);
-    landmarksFinder->read(landmarksPath);
-
-    cv::Mat frame;
-
-    std::string label;
-    std::pair<int, float> predictRes;
-
-    int best = 0, temp = 0;
-
-    for (double threshold = 2000; threshold <= 4000; threshold += 50)
-    {
-        std::string filename = "dataframes/regognition/recodnitiondata.txt";
-        std::ifstream file(filename);
-        std::string line;
-
-        std::vector<std::vector<int>> data(4, std::vector<int>(4, 0));
-        int i = 0;
-        bool loop = true;
-
-        while (loop)
-        {
-            if(i == 250)   break;
-            frame = cv::imread(cv::format("dataframes/regognition/data/img_%d.png", i));
-
-            finder->find(frame);
-            cv::Rect roi = finder->faces[0];
-            landmarksFinder->find(frame, getExtendedRect(frame, roi));
-            cv::Mat allidnedFace = frontalizeFace2D(frame, landmarksFinder->landmarks);
-
-            finder->find(allidnedFace);
-            allidnedFace = (finder->faces.empty()) ? allidnedFace : allidnedFace(getNormalRect(allidnedFace, finder->faces[0])).clone();
-
-            predictRes = recognizer->predict(allidnedFace.clone());
-            (predictRes.second > threshold) ? predictRes.first = 3 : 0;
-            std::getline(file, line);
-            data[predictRes.first][std::stoi(line)] += 1;
-
-            ++i;
-        }
-
-        temp = 0;
-
-        for (int j = 0; j < 3; ++j){
-            temp += data[j][j];
-        }
-
-        if (temp > best){
-            best = temp;
-        }
-
-        std::cout << cv::format("%f\t%d\t%d\n", threshold, temp, data[3][3]);
-    }
-
-    std::cout << "\n\n\n" << best << "\n\n\n";
-    return best;
-}
-
-struct ClickData
-{
-    int x = 0;
-    int y = 0;
-    bool clicked = false;
-};
-
-void onMouse(int event, int x, int y, int /*flags*/, void* userdata)
-{
-    auto data = reinterpret_cast<ClickData*>(userdata);
-    if (event == cv::EVENT_LBUTTONDOWN)
-    {
-        data->x = x;
-        data->y = y;
-        data->clicked = true;
-    }
-}
-
-void LandmarksDataCollector(cv::Ptr<BaseFaceFinder> finder, std::string& finderPath)
-{
-    finder->read(finderPath);
-
-    cv::Mat frame;
-    int i = 0;
-
-    cv::namedWindow("LandmarksDataCollector");
-
-    std::string filename = "dataframes/landmarksdata/landmarksdata.txt";
-    std::fstream file(filename, std::fstream::in | std::fstream::out | std::fstream::app);
-
-    ClickData data;
-
-    cv::setMouseCallback("LandmarksDataCollector", onMouse, &data);
-
-    while (true)
-    {
-        frame = cv::imread(cv::format("dataframes/landmarksdata/landmarksframes/img_%d.png", i));
-        if(frame.empty())   break;
-        finder->find(frame);
-
-        for (size_t i = 0; i < finder->faces.size(); ++i)
-        {
-            cv::Rect extended = getExtendedRect(frame, finder->faces[i]);
-            drawRectWithLable(frame, extended, "");
-        }
-
-        cv::imshow("LandmarksDataCollector", frame);
-
-        int counter = 0;
-
-        while (counter < 3)
-        {
-            if(cv::waitKey(1) == 'q'){
-                break;
-            }
-            if(!data.clicked) continue;
-
-            if(counter == 0)    file << cv::format("img_%d:\n", i);
-            file << data.x << '\t' << data.y << '\n';
-            data.clicked = false;
-            ++counter;
-        }
-
-        if(cv::waitKey(1) == 'q'){
-            break;
-        }
-        ++i;
-    }
-}
-
-
-double LandmarksAccuracyTest(cv::Ptr<BaseFaceFinder> finder, cv::Ptr<BaseLandmarksFinder> landmarksFinder, std::string& finderPath, std::string& landmarksPath)
-{
-    finder->read(finderPath);
-    landmarksFinder->read(landmarksPath);
-
-    cv::Mat frame;
-    int i = 0;
-
-    std::string filename = "dataframes/landmarksdata/landmarksdata.txt";
-    std::ifstream file(filename);
-    std::string line;
-
-    double result = 0;
-
-    while (true)
-    {
-        frame = cv::imread(cv::format("dataframes/landmarksdata/landmarksframes/img_%d.png", i));
-        if(frame.empty())   break;
-        finder->find(frame);
-
-        for (size_t i = 0; i < finder->faces.size(); ++i)
-        {
-            cv::Rect extended = getExtendedRect(frame, finder->faces[i]);
-            landmarksFinder->find(frame, extended);
-        }
-
-        cv::Point2i leftEye = {0, 0}, rightEye = {0, 0}, mounse = {0, 0};
-
-        for(int j = 36; j <= 41; ++j)
-        {
-            leftEye.x += landmarksFinder->landmarks[j].x;
-            leftEye.y += landmarksFinder->landmarks[j].y;
-        }
-
-        leftEye /= 6;
-
-        //cv::circle(frame, leftEye, 2, {255, 0, 0});
-
-        for(int j = 42; j <= 47; ++j)
-        {
-            rightEye.x += landmarksFinder->landmarks[j].x;
-            rightEye.y += landmarksFinder->landmarks[j].y;
-        }
-
-        rightEye /= 6;
-
-        //cv::circle(frame, rightEye, 2, {0, 255, 0});
-
-        for(int j = 48; j <= 59; ++j)
-        {
-            mounse.x += landmarksFinder->landmarks[j].x;
-            mounse.y += landmarksFinder->landmarks[j].y;
-            //cv::circle(frame, landmarksFinder->landmarks[j], 2, {255, 0, 0});
-        }
-
-        mounse /= 12;
-
-        //cv::circle(frame, mounse, 2, {0, 0, 255});
-
-        for (size_t j = 0; j < 4; j++)
-        {
-            std::getline(file, line);
-            if(j == 0)  continue;
-            std::stringstream stream(line);
-            cv::Point2i point;
-            stream >> point.x >> point.y;
-
-            switch (j)
-            {
-            case 1:
-            point -= leftEye;
-                break;
-            case 2:
-            point -= rightEye;
-                break;
-            case 3:
-            point -= mounse;
-                break;
-            }
-            result += sqrt(point.x * point.x + point.y * point.y);
-        }
-
-        if(cv::waitKey(1) == 'q'){
-            break;
-        }
-        ++i;
-    }
-    return result;
-}
-
-
-void joinFrames()
-{
-    cv::Ptr<BaseFaceFinder> finder = cv::makePtr<DNNFaceFinder>();
-    std::string finderPath = "models/faceDetectors/dnn/yolov11n-face.onnx";
-    finder->read(finderPath);
-
-    std::string dnnWeightsPath = "models/recognizers/dnn/arcface.onnx";
-    cv::Ptr<BaseFaceRecognizer> recognizer = cv::makePtr<DNNRecognizer>(dnnWeightsPath);
-    std::string recognizerPath = "models/recognizers/dnn/DNNFaceRecognizer.xml";
-    recognizer->read(recognizerPath);
-
-    cv::Ptr<BaseLandmarksFinder> landmarksFinder = cv::makePtr<DNNLandmarksFinder>();
-    std::string landmarksPath = "models/landmarks/2D/dnn/face_alignment.onnx";
-    landmarksFinder->read(landmarksPath);
-
-    std::vector<cv::Mat> imgs =
-        {
-            cv::imread("dataframes/withfon/img_69.png")
-        };
-
-    for (size_t i = 0; i < imgs.size(); ++i)
-    {
-        finder->find(imgs[i]);
-        for (size_t j = 0; j < finder->faces.size(); ++j)
-        {
-            cv::rectangle(imgs[i], finder->faces[j], cv::Scalar(0, 255, 0), 5);
-        }
-    }
-
-    // finder->find(imgs[0]);
-    //
-    // cv::Mat resultImg = imgs[0].clone();
-    //
-    // finder->find(imgs[0]);
-    // cv::Rect extended = getExtendedRect(imgs[0], finder->faces[0]);
-    // landmarksFinder->find(imgs[0], extended);
-    // cv::Mat allidnedFace = frontalizeFace2D(imgs[0], landmarksFinder->landmarks);
-    //
-    // for (size_t j = 0; j < landmarksFinder->landmarks.size(); ++j){
-    //     cv::circle(imgs[0], landmarksFinder->landmarks[j], 2, {0, 255, 0}, 5);
-    // }
-    //
-    // std::pair<int, float> predictRes = recognizer->predict(allidnedFace);
-    // std::string label = cv::format("ID: %d, distance: %.2f", predictRes.first, predictRes.second);
-    // drawRectWithLable(resultImg, finder->faces[0], label);
-    //
-    // cv::resize(allidnedFace, allidnedFace, cv::Size(allidnedFace.cols * (static_cast<double>(imgs[0].rows) / allidnedFace.rows), imgs[0].rows));
-    // imgs.push_back(allidnedFace);
-    // imgs.push_back(resultImg);
-
-    cv::Mat res;
-    cv::hconcat(imgs, res);
-    cv::imwrite("dataframes/textData/img_1234post.png", res);
-}
 
 
 int main()
 {
-    cv::Ptr<BaseFaceFinder> finder = cv::makePtr<DNNFaceFinder>();
-    std::string finderPath = "models/faceDetectors/dnn/yolov11n-face.onnx";
+    const std::unique_ptr<BaseFaceFinder> finder = std::make_unique<DNNFaceFinder>();
+    const std::string finderPath = "models/faceDetectors/dnn/yolov11n-face.onnx";
+    finder->read(finderPath);
 
-    //FaceDetectorTest(finder, finderPath);
-    //std::cout << '\n' << FaceDetectorTimeTest(finder, finderPath);
+    FaceDetectorTest(finder);
 
-    std::string dnnWeightsPath = "models/recognizers/dnn/arcface.onnx";
-    cv::Ptr<BaseFaceRecognizer> recognizer = cv::makePtr<DNNRecognizer>(dnnWeightsPath);
-    std::string recognizerPath = "models/recognizers/dnn/DNNFaceRecognizer.xml";
+    const std::string dnnWeightsPath = "models/recognizers/dnn/arcface.onnx";
+    const std::unique_ptr<BaseFaceRecognizer> recognizer = std::make_unique<DNNRecognizer>(dnnWeightsPath);
+    const std::string recognizerPath = "models/recognizers/dnn/DNNFaceRecognizer.xml";
+    recognizer->read(recognizerPath);
 
-    //FaceRecognitionTrainTest(finder, recognizer, finderPath, recognizerPath);
-    //FaceRecognitionTrainOnPhotosTest(finder, recognizer, finderPath, recognizerPath);
-    //FaceRecognitionPredictTest(finder, recognizer, finderPath, recognizerPath);
-
-
-    //std::cout << '\n' << FaceRecognitionTimeTest(finder, recognizer, finderPath, recognizerPath);
+    // FaceRecognitionTrainTest(finder, recognizer, finderPath, recognizerPath);
+    // FaceRecognitionPredictTest(finder, recognizer, finderPath, recognizerPath);
 
 
-    cv::Ptr<BaseLandmarksFinder> landmarksFinder = cv::makePtr<LBFLandmarksFinder>();
-    std::string landmarksPath = "models/landmarks/2D/classic/lbfmodel_landmark.yaml";
+    const std::unique_ptr<BaseLandmarksFinder> landmarksFinder = std::make_unique<DNNLandmarksFinder>();
+    const std::string landmarksPath = "models/landmarks/2D/dnn/face_alignment.onnx";
+    landmarksFinder->read(landmarksPath);
 
-    //LandmarksTest(finder, landmarksFinder, finderPath, landmarksPath);
-    //Allignment2DTest(finder, landmarksFinder, finderPath, landmarksPath);
-    //Allignment3DTest(finder, landmarksFinder, finderPath, landmarksPath);
-
-
-    //FaceRecognitionWithAllignment2DTrainTest(finder, recognizer, landmarksFinder, finderPath, recognizerPath, landmarksPath);
-    //FaceRecognitionWithAllignment2DPredictTest(finder, recognizer, landmarksFinder, finderPath, recognizerPath, landmarksPath);
-
-    //FaceRecognitionWithAllignment3DTrainTest(finder, recognizer, landmarksFinder, finderPath, recognizerPath, landmarksPath);
-    //FaceRecognitionWithAllignment3DPredictTest(finder, recognizer, landmarksFinder, finderPath, recognizerPath, landmarksPath);
+    // LandmarksTest(finder, landmarksFinder, finderPath, landmarksPath);
+    // Alignment2DTest(finder, landmarksFinder, finderPath, landmarksPath);
+    // Alignment3DTest(finder, landmarksFinder, finderPath, landmarksPath);
 
 
-    //FaceRecognitionWithAllignment3DTrainOnPhotosTest(finder, recognizer, landmarksFinder, finderPath, recognizerPath, landmarksPath);
-    //FaceRecognitionWithAllignment2DTrainOnPhotosTest(finder, recognizer, landmarksFinder, finderPath, recognizerPath, landmarksPath);
+    // FaceRecognitionWithAlignment2DTrainTest(finder, recognizer, landmarksFinder, finderPath, recognizerPath, landmarksPath);
+    // FaceRecognitionWithAlignment2DPredictTest(finder, recognizer, landmarksFinder, finderPath, recognizerPath, landmarksPath);
 
-    //std::cout << '\n' << LandmarksTimeTest(finder, landmarksFinder, finderPath, landmarksPath);
-
-
-    // FaceReconstraction reconstraction;
-    // std::string landmarks3DPath = "models/landmarks/3D/face-alignment3D.onnx";
-    // std::string depthPath = "models/landmarks/3D/depthLandmark.onnx";
-    //FaceReconstractionTest(finder, reconstraction, finderPath, landmarks3DPath, depthPath);
-
-
-
-    //addFrames(6);
-    //FaceDetectorAccuracyTest(finder, finderPath);
-    //LandmarksDataCollector(finder, finderPath);
-    //std::cout << "\n\n" << LandmarksAccuracyTest(finder, landmarksFinder, finderPath, landmarksPath) << "\n\n";
-    //getDistances(finder, recognizer, finderPath, recognizerPath);
-    //FaceRecognitionAccuracyTest(finder, recognizer, finderPath, recognizerPath, INFINITY);
-    //FaceRecognitionAccuracyAlligment3DTest(finder, recognizer, landmarksFinder, finderPath, recognizerPath, landmarksPath, 0.20675585);
-    //FaceRecognitionAccuracyAlligment2DTest(finder, recognizer, landmarksFinder, finderPath, recognizerPath, landmarksPath, 3290.97);
-    //FaceRecognitionDataCollector(finder, finderPath);
-    //getThresholdValue(finder, recognizer, finderPath, recognizerPath);
-    //getThresholdValue3DAlligment(finder, recognizer, landmarksFinder, finderPath, recognizerPath, landmarksPath);
-    //getThresholdValue2DAlligment(finder, recognizer, landmarksFinder, finderPath, recognizerPath, landmarksPath);
-    joinFrames();
+    // FaceRecognitionWithAlignment3DTrainTest(finder, recognizer, landmarksFinder, finderPath, recognizerPath, landmarksPath);
+    // FaceRecognitionWithAlignment3DPredictTest(finder, recognizer, landmarksFinder, finderPath, recognizerPath, landmarksPath);
 
     return 0;
 }
